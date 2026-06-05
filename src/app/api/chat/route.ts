@@ -9,6 +9,9 @@ import {
   withSecurityHeaders,
 } from '@/lib/api-utils'
 import { NextResponse } from 'next/server'
+import fs from 'fs/promises'
+import path from 'path'
+import os from 'os'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -37,6 +40,40 @@ let zaiInstance: InstanceType<typeof import('z-ai-web-dev-sdk').default> | null 
 let zaiInitPromise: Promise<InstanceType<typeof import('z-ai-web-dev-sdk').default>> | null = null
 
 /**
+ * Ensure the .z-ai-config file exists. If not, create it from environment variables.
+ * This fixes the issue where the config file is gitignored and missing on cloned machines.
+ */
+async function ensureConfig(): Promise<void> {
+  const configPaths = [
+    path.join(process.cwd(), '.z-ai-config'),
+    path.join(os.homedir(), '.z-ai-config'),
+  ]
+  // Check if any config already exists
+  for (const p of configPaths) {
+    try {
+      const content = await fs.readFile(p, 'utf-8')
+      const config = JSON.parse(content)
+      if (config.baseUrl && config.apiKey) return // valid config exists
+    } catch {
+      // file doesn't exist or is invalid, continue
+    }
+  }
+  // No valid config found — auto-create from environment variables
+  const baseUrl = process.env.ZAI_BASE_URL || process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1'
+  const apiKey = process.env.ZAI_API_KEY || 'ollama'
+  const chatId = process.env.ZAI_CHAT_ID || 'nexus-one-boardroom'
+  const userId = process.env.ZAI_USER_ID || 'nexus-user'
+  const config = { baseUrl, apiKey, chatId, userId }
+  const configPath = path.join(process.cwd(), '.z-ai-config')
+  try {
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8')
+    console.log(`[ZAI] Auto-created .z-ai-config at ${configPath} (baseUrl: ${baseUrl})`)
+  } catch (err) {
+    console.error('[ZAI] Failed to auto-create .z-ai-config:', err)
+  }
+}
+
+/**
  * Get or create the ZAI SDK singleton.
  * Caches the instance and the init promise to avoid creating a new one per request.
  */
@@ -47,6 +84,8 @@ async function getZAI(): Promise<InstanceType<typeof import('z-ai-web-dev-sdk').
   if (zaiInitPromise) return zaiInitPromise
 
   zaiInitPromise = (async () => {
+    // Ensure config file exists before creating the SDK instance
+    await ensureConfig()
     const ZAI = (await import('z-ai-web-dev-sdk')).default
     zaiInstance = await ZAI.create()
     return zaiInstance

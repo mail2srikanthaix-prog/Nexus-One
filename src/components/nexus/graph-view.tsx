@@ -82,10 +82,13 @@ export function GraphView() {
         nodesRef.current = d.nodes.map((n: { id: string; type: string; name: string; relationCount: number }, i: number) => {
           const angle = (i / d.nodes.length) * Math.PI * 2
           const radius = 200 + Math.random() * 150
+          // Use a reasonable default center; simulation will adjust once canvas dimensions are known
+          const cx = typeof window !== 'undefined' ? window.innerWidth / 2 : 520
+          const cy = typeof window !== 'undefined' ? window.innerHeight / 2 : 260
           return {
             ...n,
-            x: 520 + Math.cos(angle) * radius,
-            y: 260 + Math.sin(angle) * radius,
+            x: cx + Math.cos(angle) * radius,
+            y: cy + Math.sin(angle) * radius,
             vx: 0,
             vy: 0,
           }
@@ -404,12 +407,26 @@ export function GraphView() {
     isPanningRef.current = false
   }, [])
 
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault()
-    const delta = e.deltaY > 0 ? 0.9 : 1.1
-    const newScale = Math.max(0.2, Math.min(5, transformRef.current.scale * delta))
-    transformRef.current.scale = newScale
-  }, [])
+  // Use a non-passive wheel listener to allow preventDefault (avoids passive event listener warnings)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const delta = e.deltaY > 0 ? 0.9 : 1.1
+      const newScale = Math.max(0.2, Math.min(5, transformRef.current.scale * delta))
+      // Zoom centered on cursor position
+      const rect = canvas.getBoundingClientRect()
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
+      const oldScale = transformRef.current.scale
+      transformRef.current.x = mouseX - (mouseX - transformRef.current.x) * (newScale / oldScale)
+      transformRef.current.y = mouseY - (mouseY - transformRef.current.y) * (newScale / oldScale)
+      transformRef.current.scale = newScale
+    }
+    canvas.addEventListener('wheel', handler, { passive: false })
+    return () => canvas.removeEventListener('wheel', handler)
+  }, [data, loading])
 
   if (error) {
     return (
@@ -501,7 +518,7 @@ export function GraphView() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
+          /* wheel handled via useEffect with non-passive listener */
           role="img"
           aria-label="Knowledge graph visualization showing entities and their relationships"
         />

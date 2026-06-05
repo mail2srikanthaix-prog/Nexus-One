@@ -63,7 +63,7 @@ export function NexusLayout() {
           onSearch={handleSearch}
           onToggleSidebar={handleToggleSidebar}
         />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <main className="flex flex-1 flex-col overflow-hidden min-h-0">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentView}
