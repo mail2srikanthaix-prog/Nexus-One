@@ -3,7 +3,33 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
-  // Create Organization
+  console.log('🧹 Cleaning existing data...')
+
+  // Delete in correct order to respect foreign key constraints
+  await prisma.auditLog.deleteMany()
+  await prisma.chatMessage.deleteMany()
+  await prisma.agentAction.deleteMany()
+  await prisma.event.deleteMany()
+  await prisma.task.deleteMany()
+  await prisma.decision.deleteMany()
+  await prisma.graphRelation.deleteMany()
+  await prisma.graphEntity.deleteMany()
+  await prisma.prediction.deleteMany()
+  await prisma.memory.deleteMany()
+  await prisma.connector.deleteMany()
+  await prisma.agent.deleteMany()
+  await prisma.person.deleteMany()
+  await prisma.project.deleteMany()
+  await prisma.team.deleteMany()
+  await prisma.user.deleteMany()
+  await prisma.document.deleteMany()
+  await prisma.organization.deleteMany()
+
+  console.log('✅ Database cleaned. Seeding fresh data...\n')
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Organization
+  // ═══════════════════════════════════════════════════════════════════
   const org = await prisma.organization.create({
     data: {
       name: 'Nexus Corp',
@@ -12,8 +38,11 @@ async function main() {
       revenue: 250000000,
     },
   })
+  console.log(`✓ Organization: ${org.name}`)
 
-  // Create Teams
+  // ═══════════════════════════════════════════════════════════════════
+  // Teams
+  // ═══════════════════════════════════════════════════════════════════
   const teams = await Promise.all([
     prisma.team.create({ data: { name: 'Engineering', description: 'Core platform engineering', color: '#10b981', orgId: org.id } }),
     prisma.team.create({ data: { name: 'Product', description: 'Product strategy and management', color: '#8b5cf6', orgId: org.id } }),
@@ -24,8 +53,11 @@ async function main() {
     prisma.team.create({ data: { name: 'Finance', description: 'Financial planning and analysis', color: '#84cc16', orgId: org.id } }),
     prisma.team.create({ data: { name: 'People', description: 'HR and talent', color: '#ec4899', orgId: org.id } }),
   ])
+  console.log(`✓ Teams: ${teams.length}`)
 
-  // Create People
+  // ═══════════════════════════════════════════════════════════════════
+  // People
+  // ═══════════════════════════════════════════════════════════════════
   const people = await Promise.all([
     prisma.person.create({ data: { name: 'Sarah Chen', email: 'sarah.chen@nexuscorp.io', role: 'CEO', department: 'Executive', status: 'active', riskScore: 5, influenceScore: 98, orgId: org.id, teamId: teams[0].id } }),
     prisma.person.create({ data: { name: 'Marcus Rivera', email: 'marcus.r@nexuscorp.io', role: 'CTO', department: 'Engineering', status: 'active', riskScore: 8, influenceScore: 95, orgId: org.id, teamId: teams[0].id } }),
@@ -43,8 +75,11 @@ async function main() {
     prisma.person.create({ data: { name: 'Tom Bradley', email: 'tom.b@nexuscorp.io', role: 'DevOps Lead', department: 'Operations', status: 'active', riskScore: 14, influenceScore: 68, orgId: org.id, teamId: teams[5].id } }),
     prisma.person.create({ data: { name: 'Yuki Tanaka', email: 'yuki.t@nexuscorp.io', role: 'ML Engineer', department: 'Data Science', status: 'active', riskScore: 8, influenceScore: 66, orgId: org.id, teamId: teams[4].id } }),
   ])
+  console.log(`✓ People: ${people.length}`)
 
-  // Create Projects
+  // ═══════════════════════════════════════════════════════════════════
+  // Projects
+  // ═══════════════════════════════════════════════════════════════════
   const projects = await Promise.all([
     prisma.project.create({ data: { name: 'Nexus One Platform', description: 'Enterprise AI Operating System', status: 'active', health: 92, progress: 67, riskScore: 18, budget: 5000000, budgetUsed: 3200000, startDate: new Date('2024-01-15'), endDate: new Date('2025-06-30'), orgId: org.id, teamId: teams[0].id } }),
     prisma.project.create({ data: { name: 'Quantum Security Shield', description: 'Zero-trust security implementation', status: 'active', health: 88, progress: 45, riskScore: 25, budget: 2000000, budgetUsed: 850000, startDate: new Date('2024-06-01'), endDate: new Date('2025-12-31'), orgId: org.id, teamId: teams[3].id } }),
@@ -53,8 +88,11 @@ async function main() {
     prisma.project.create({ data: { name: 'Self-Healing Infrastructure', description: 'Autonomous system recovery and optimization', status: 'on-hold', health: 65, progress: 20, riskScore: 45, budget: 3000000, budgetUsed: 450000, startDate: new Date('2024-11-01'), endDate: new Date('2025-11-30'), orgId: org.id, teamId: teams[5].id } }),
     prisma.project.create({ data: { name: 'Customer 360', description: 'Unified customer intelligence platform', status: 'active', health: 82, progress: 58, riskScore: 22, budget: 1200000, budgetUsed: 680000, startDate: new Date('2024-03-15'), endDate: new Date('2025-03-15'), orgId: org.id, teamId: teams[1].id } }),
   ])
+  console.log(`✓ Projects: ${projects.length}`)
 
-  // Create Tasks
+  // ═══════════════════════════════════════════════════════════════════
+  // Tasks
+  // ═══════════════════════════════════════════════════════════════════
   const taskData = [
     { title: 'Implement graph query engine', status: 'in-progress', priority: 'high', assigneeId: people[9].id, projectId: projects[0].id },
     { title: 'Deploy mTLS across all services', status: 'in-progress', priority: 'critical', assigneeId: people[6].id, projectId: projects[1].id },
@@ -73,8 +111,11 @@ async function main() {
     { title: 'Employee engagement survey analysis', status: 'todo', priority: 'low', assigneeId: people[10].id, projectId: projects[0].id },
   ]
   await Promise.all(taskData.map(t => prisma.task.create({ data: t })))
+  console.log(`✓ Tasks: ${taskData.length}`)
 
-  // Create Decisions
+  // ═══════════════════════════════════════════════════════════════════
+  // Decisions
+  // ═══════════════════════════════════════════════════════════════════
   const decisions = await Promise.all([
     prisma.decision.create({ data: { title: 'Adopt microservices architecture', description: 'Migrate from monolith to microservices', status: 'implemented', impact: 'high', confidence: 0.85, reasoning: 'Enables independent scaling and deployment', madeById: people[1].id, projectId: projects[0].id } }),
     prisma.decision.create({ data: { title: 'Implement zero-trust security model', description: 'Full zero-trust across all systems', status: 'approved', impact: 'critical', confidence: 0.92, reasoning: 'Required for SOC2 and FedRAMP compliance', madeById: people[6].id, projectId: projects[1].id } }),
@@ -82,8 +123,11 @@ async function main() {
     prisma.decision.create({ data: { title: 'Launch AI boardroom feature', description: 'Virtual executive team simulation', status: 'proposed', impact: 'high', confidence: 0.65, reasoning: 'Competitive advantage and customer demand', madeById: people[0].id } }),
     prisma.decision.create({ data: { title: 'Freeze hiring in Q2', description: 'Temporary hiring freeze to manage budget', status: 'approved', impact: 'medium', confidence: 0.70, reasoning: 'Budget constraints from delayed revenue', madeById: people[2].id } }),
   ])
+  console.log(`✓ Decisions: ${decisions.length}`)
 
-  // Create Events (recent)
+  // ═══════════════════════════════════════════════════════════════════
+  // Events
+  // ═══════════════════════════════════════════════════════════════════
   const now = new Date()
   const eventData = [
     { type: 'deployment', title: 'Platform v3.2.1 deployed', description: 'Minor bug fixes and performance improvements', severity: 'info', source: 'kubernetes', personId: people[5].id, projectId: projects[0].id },
@@ -102,11 +146,14 @@ async function main() {
     { type: 'customer', title: 'Customer complaint: API reliability', description: 'Beta client reported intermittent 503 errors', severity: 'warning', source: 'zendesk', projectId: projects[0].id },
     { type: 'security', title: 'CVE-2024-1234 patch applied', description: 'Critical vulnerability patched across all services', severity: 'info', source: 'snyk', personId: people[6].id },
   ]
-  const events = await Promise.all(eventData.map((e, i) => 
+  const events = await Promise.all(eventData.map((e, i) =>
     prisma.event.create({ data: { ...e, createdAt: new Date(now.getTime() - i * 3600000) } })
   ))
+  console.log(`✓ Events: ${events.length}`)
 
-  // Create Graph Entities
+  // ═══════════════════════════════════════════════════════════════════
+  // Knowledge Graph
+  // ═══════════════════════════════════════════════════════════════════
   const graphEntities = await Promise.all([
     prisma.graphEntity.create({ data: { type: 'person', name: 'Sarah Chen', properties: JSON.stringify({ role: 'CEO', department: 'Executive' }) } }),
     prisma.graphEntity.create({ data: { type: 'person', name: 'Marcus Rivera', properties: JSON.stringify({ role: 'CTO', department: 'Engineering' }) } }),
@@ -123,8 +170,6 @@ async function main() {
     prisma.graphEntity.create({ data: { type: 'decision', name: 'Adopt Microservices', properties: JSON.stringify({ impact: 'high', confidence: 0.85 }) } }),
     prisma.graphEntity.create({ data: { type: 'data_asset', name: 'Customer 360 Dataset', properties: JSON.stringify({ records: 2500000, sensitivity: 'confidential' }) } }),
   ])
-
-  // Create Graph Relations
   await Promise.all([
     prisma.graphRelation.create({ data: { type: 'reports_to', sourceId: graphEntities[1].id, targetId: graphEntities[0].id, weight: 0.9 } }),
     prisma.graphRelation.create({ data: { type: 'reports_to', sourceId: graphEntities[2].id, targetId: graphEntities[0].id, weight: 0.9 } }),
@@ -142,8 +187,11 @@ async function main() {
     prisma.graphRelation.create({ data: { type: 'authored', sourceId: graphEntities[1].id, targetId: graphEntities[12].id, weight: 0.8 } }),
     prisma.graphRelation.create({ data: { type: 'accesses', sourceId: graphEntities[3].id, targetId: graphEntities[13].id, weight: 0.5 } }),
   ])
+  console.log(`✓ Graph: ${graphEntities.length} entities, 15 relations`)
 
-  // Create Agents
+  // ═══════════════════════════════════════════════════════════════════
+  // AI Agents
+  // ═══════════════════════════════════════════════════════════════════
   const agents = await Promise.all([
     prisma.agent.create({ data: { name: 'CEO Agent', type: 'ceo', description: 'Strategic planning and executive decision support', status: 'thinking', capabilities: JSON.stringify(['strategic_planning', 'market_analysis', 'executive_briefing']), lastAction: 'Analyzing Q1 performance metrics' } }),
     prisma.agent.create({ data: { name: 'CTO Agent', type: 'cto', description: 'Technology strategy and architecture decisions', status: 'executing', capabilities: JSON.stringify(['architecture_review', 'tech_debt_analysis', 'innovation_scouting']), lastAction: 'Reviewing microservices migration progress' } }),
@@ -156,8 +204,11 @@ async function main() {
     prisma.agent.create({ data: { name: 'HR Agent', type: 'hr', description: 'People operations and talent intelligence', status: 'thinking', capabilities: JSON.stringify(['attrition_prediction', 'engagement_analysis', 'talent_matching']), lastAction: 'Flagged 3 attrition risks' } }),
     prisma.agent.create({ data: { name: 'Monitoring Agent', type: 'monitoring', description: 'System observability and anomaly detection', status: 'executing', capabilities: JSON.stringify(['anomaly_detection', 'performance_monitoring', 'alert_management']), lastAction: 'Detected API latency anomaly' } }),
   ])
+  console.log(`✓ Agents: ${agents.length}`)
 
-  // Create Agent Actions
+  // ═══════════════════════════════════════════════════════════════════
+  // Agent Actions
+  // ═══════════════════════════════════════════════════════════════════
   const actionData = [
     { agentId: agents[0].id, type: 'reasoning', title: 'Q1 Strategic Assessment', description: 'Analyzing quarterly performance against OKRs', result: 'Q1 performance exceeds targets by 8%. Recommend increasing R&D investment.', status: 'completed', confidence: 0.89, evidence: JSON.stringify(['revenue_data', 'okr_tracking', 'market_benchmarks']) },
     { agentId: agents[1].id, type: 'execution', title: 'Architecture Review Sprint 24', description: 'Reviewing code changes for architectural compliance', result: '3 violations detected. Auto-created remediation tasks.', status: 'completed', confidence: 0.92, evidence: JSON.stringify(['code_review', 'dependency_analysis']) },
@@ -167,8 +218,11 @@ async function main() {
     { agentId: agents[2].id, type: 'recommendation', title: 'Budget Reallocation Proposal', description: 'Self-Healing project over budget by 15%', result: 'Recommend reducing scope or increasing allocation by $200K', status: 'pending', confidence: 0.76, evidence: JSON.stringify(['budget_tracking', 'burn_rate_analysis']) },
   ]
   await Promise.all(actionData.map(a => prisma.agentAction.create({ data: a })))
+  console.log(`✓ Agent Actions: ${actionData.length}`)
 
-  // Create Memories
+  // ═══════════════════════════════════════════════════════════════════
+  // Memories
+  // ═══════════════════════════════════════════════════════════════════
   const memoryData = [
     { type: 'strategic', title: '2024 Strategic Pivot: AI-First', content: 'Board decided to pivot company strategy to AI-first approach. All product lines to integrate AI capabilities by Q3 2025. Key driver: competitive pressure from Palantir and Databricks.', source: 'board_meeting', importance: 0.95, tags: 'strategy,ai,board,2024' },
     { type: 'episodic', title: 'Q4 2023 Security Incident', content: 'Unauthorized access detected via compromised service account. Contained within 2 hours. Root cause: leaked API key in public repo. Led to implementation of secret scanning in CI/CD.', source: 'incident_report', importance: 0.9, tags: 'security,incident,postmortem' },
@@ -180,8 +234,11 @@ async function main() {
     { type: 'operational', title: 'Deployment Window Policy', content: 'Production deployments: Tuesday-Thursday 10am-4pm EST. No Friday deployments. Emergency hotfixes require CTO approval. Blue-green deployment for zero-downtime. Canary releases for high-risk changes.', source: 'policy', importance: 0.75, tags: 'deployment,policy,production,release' },
   ]
   await Promise.all(memoryData.map(m => prisma.memory.create({ data: m })))
+  console.log(`✓ Memories: ${memoryData.length}`)
 
-  // Create Predictions
+  // ═══════════════════════════════════════════════════════════════════
+  // Predictions
+  // ═══════════════════════════════════════════════════════════════════
   const predictionData = [
     { type: 'delay', title: 'Self-Healing Infrastructure Delay', description: 'Project at risk of missing Q3 deadline due to team capacity constraints', probability: 0.72, impact: 'high', timeframe: '90 days', status: 'active', evidence: JSON.stringify(['sprint_velocity_decline', 'team_capacity_analysis', 'dependency_delays']) },
     { type: 'churn', title: 'Globex Inc Churn Risk', description: 'Key technical sponsor left. Engagement scores declining.', probability: 0.65, impact: 'high', timeframe: '60 days', status: 'active', evidence: JSON.stringify(['contact_departure', 'usage_decline', 'support_ticket_trend']) },
@@ -191,8 +248,11 @@ async function main() {
     { type: 'risk', title: 'Compliance Gap: SOC2 Audit', description: 'Missing evidence for 3 control objectives', probability: 0.45, impact: 'critical', timeframe: '30 days', status: 'active', evidence: JSON.stringify(['audit_readiness_score', 'control_coverage', 'evidence_collection_status']) },
   ]
   await Promise.all(predictionData.map(p => prisma.prediction.create({ data: p })))
+  console.log(`✓ Predictions: ${predictionData.length}`)
 
-  // Create Connectors
+  // ═══════════════════════════════════════════════════════════════════
+  // Connectors
+  // ═══════════════════════════════════════════════════════════════════
   const connectorData = [
     { name: 'GitHub', type: 'github', category: 'development', status: 'connected', lastSync: new Date(now.getTime() - 300000), recordCount: 15847 },
     { name: 'Slack', type: 'slack', category: 'communication', status: 'connected', lastSync: new Date(now.getTime() - 60000), recordCount: 234567 },
@@ -208,8 +268,11 @@ async function main() {
     { name: 'Google Workspace', type: 'google', category: 'communication', status: 'connected', lastSync: new Date(now.getTime() - 420000), recordCount: 45678 },
   ]
   await Promise.all(connectorData.map(c => prisma.connector.create({ data: { ...c, orgId: org.id } })))
+  console.log(`✓ Connectors: ${connectorData.length}`)
 
-  // Create Audit Logs
+  // ═══════════════════════════════════════════════════════════════════
+  // Audit Logs
+  // ═══════════════════════════════════════════════════════════════════
   const auditData = [
     { action: 'user.login', actor: 'sarah.chen@nexuscorp.io', resource: 'dashboard', severity: 'info', ipAddress: '10.0.1.42' },
     { action: 'agent.execute', actor: 'system:security-agent', resource: 'vulnerability_scan', details: 'Automated vulnerability scan completed', severity: 'info' },
@@ -219,8 +282,11 @@ async function main() {
     { action: 'decision.approve', actor: 'elena.v@nexuscorp.io', resource: 'budget_reallocation', details: 'Approved Q2 budget adjustments', severity: 'info', ipAddress: '10.0.3.5' },
   ]
   await Promise.all(auditData.map(a => prisma.auditLog.create({ data: a })))
+  console.log(`✓ Audit Logs: ${auditData.length}`)
 
-  // Create Demo User
+  // ═══════════════════════════════════════════════════════════════════
+  // Demo User
+  // ═══════════════════════════════════════════════════════════════════
   const bcrypt = await import('bcryptjs')
   const passwordHash = await bcrypt.hash('nexus123', 12)
   await prisma.user.create({
@@ -232,29 +298,33 @@ async function main() {
       department: 'Executive',
     },
   })
-  console.log('- 1 demo user (admin@nexuscorp.io / nexus123)')
 
-  console.log('Seed data created successfully!')
-  console.log(`- ${1} organization`)
-  console.log(`- ${teams.length} teams`)
-  console.log(`- ${people.length} people`)
-  console.log(`- ${projects.length} projects`)
-  console.log(`- ${taskData.length} tasks`)
-  console.log(`- ${decisions.length} decisions`)
-  console.log(`- ${events.length} events`)
-  console.log(`- ${graphEntities.length} graph entities`)
-  console.log(`- 15 graph relations`)
-  console.log(`- ${agents.length} agents`)
-  console.log(`- ${actionData.length} agent actions`)
-  console.log(`- ${memoryData.length} memories`)
-  console.log(`- ${predictionData.length} predictions`)
-  console.log(`- ${connectorData.length} connectors`)
-  console.log(`- ${auditData.length} audit logs`)
+  console.log('\n═══════════════════════════════════════')
+  console.log('  🎉 Seed completed successfully!')
+  console.log('═══════════════════════════════════════')
+  console.log(`  1 organization`)
+  console.log(`  ${teams.length} teams`)
+  console.log(`  ${people.length} people`)
+  console.log(`  ${projects.length} projects`)
+  console.log(`  ${taskData.length} tasks`)
+  console.log(`  ${decisions.length} decisions`)
+  console.log(`  ${events.length} events`)
+  console.log(`  ${graphEntities.length} graph entities + 15 relations`)
+  console.log(`  ${agents.length} AI agents`)
+  console.log(`  ${actionData.length} agent actions`)
+  console.log(`  ${memoryData.length} memories`)
+  console.log(`  ${predictionData.length} predictions`)
+  console.log(`  ${connectorData.length} connectors`)
+  console.log(`  ${auditData.length} audit logs`)
+  console.log(`  1 demo user`)
+  console.log('───────────────────────────────────────')
+  console.log('  Login: admin@nexuscorp.io / nexus123')
+  console.log('═══════════════════════════════════════')
 }
 
 main()
   .catch((e) => {
-    console.error(e)
+    console.error('❌ Seed failed:', e)
     process.exit(1)
   })
   .finally(async () => {
