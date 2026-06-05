@@ -218,7 +218,9 @@ Current Company Context:
     ]
 
     // ── Call LLM ────────────────────────────────────────────────────────
+    const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.1:8b'
     const completion = await zai.chat.completions.create({
+      model: ollamaModel,
       messages,
       thinking: { type: 'disabled' },
     })
