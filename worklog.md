@@ -373,3 +373,112 @@ Stage Summary:
 - All type mismatches between frontend types and actual API responses resolved
 - Error Boundary catches render crashes at both view-level and layout-level
 - Lint passes clean, dev server running successfully
+
+---
+Task ID: 1
+Agent: Auth & User Model Engineer
+Task: Add User model to Prisma + Create Auth API + Seed demo user
+
+Work Log:
+
+1. **Added User model to Prisma schema** (`prisma/schema.prisma`):
+   - Fields: id (cuid), name, email (unique), passwordHash, role (default "user"), avatar?, department?, lastLoginAt?, createdAt, updatedAt
+   - Added `@@index([email])` for fast login lookups
+   - Ran `bun run db:push` — schema synced successfully
+
+2. **Installed bcryptjs** for password hashing:
+   - `bun add bcryptjs` + `bun add -d @types/bcryptjs`
+   - bcryptjs v3.0.3 installed with native binaries
+
+3. **Added demo user to seed.ts** (`prisma/seed.ts`):
+   - Added bcrypt import + password hash generation (12 rounds)
+   - Creates demo user: Sarah Chen (admin@nexuscorp.io / nexus123), role: admin, department: Executive
+   - Reset database (deleted custom.db) and re-seeded all data successfully
+   - Demo user confirmed created
+
+4. **Created NextAuth configuration** (`src/app/api/auth/[...nextauth]/route.ts`):
+   - Replaced hardcoded credentials with database-backed authentication
+   - Uses `db.user.findUnique()` to look up users by email
+   - Uses `bcryptjs.compare()` to verify password hashes
+   - Updates `lastLoginAt` on successful login
+   - Creates audit log entry (`user.login`) on successful authentication
+   - JWT session strategy with 24-hour expiry
+   - JWT callback stores user id and role in token
+   - Session callback exposes id and role on session.user
+   - Sign-in page set to `/`
+   - Secret from `NEXTAUTH_SECRET` env var
+
+5. **Created session-check API route** (`src/app/api/auth/session-check/route.ts`):
+   - Uses `getServerSession(authOptions)` for server-side session verification
+   - Returns `{ authenticated, user: { name, email, role } }` or `{ authenticated: false, user: null }`
+   - Uses `apiResponse` wrapper from api-utils for consistent security headers
+
+6. **Added NEXTAUTH_SECRET to .env**:
+   - Set to `nexus-one-dev-secret-change-in-production`
+
+Stage Summary:
+- User model added to Prisma with email unique constraint and index
+- Database re-seeded with all data + 1 demo admin user (admin@nexuscorp.io / nexus123)
+- NextAuth configured with database-backed credentials provider (bcryptjs password verification)
+- Login creates audit log and updates lastLoginAt timestamp
+- Session check endpoint available at /api/auth/session-check
+- NEXTAUTH_SECRET configured in .env
+- Lint passes clean, dev server running successfully
+
+---
+Task ID: 2
+Agent: Landing Page & Auth Engineer
+Task: Build stunning landing page + login page + auth store + update page.tsx
+
+Work Log:
+
+1. **Created Auth Store** (`/src/lib/auth-store.ts`):
+   - Zustand store with `appState` ('landing' | 'login' | 'app'), `user`, `isAuthenticated`
+   - `setAppState()` for client-side navigation between views
+   - `login()` sets user + switches to app state
+   - `logout()` calls NextAuth signout + resets state to landing
+   - `checkAuth()` fetches `/api/auth/session-check` to restore session on page load
+
+2. **Created Stunning Landing Page** (`/src/components/nexus/landing-page.tsx`):
+   - Hero section with animated gradient "NEXUS ONE" title (emerald→cyan)
+   - Subtitle + tagline: "10 AI Agents. One Mission. Zero Blind Spots."
+   - Two CTA buttons: "Launch Console" (emerald) + "Watch Demo" (ghost/outline)
+   - Animated grid background, 20 floating particles, ambient glow effects
+   - 10 core features in 5-column responsive grid with icons and hover effects
+   - Stats section: 10 AI Agents | 12+ Connectors | 99.9% Uptime | <50ms Response
+   - CTA section with "Access Console" button
+   - Sticky footer with compliance badges (Zero Trust Active, SOC2 Compliant)
+   - Framer Motion scroll animations (whileInView)
+   - NO indigo/blue — only emerald and cyan accents
+
+3. **Created Login Page** (`/src/components/nexus/login-page.tsx`):
+   - Dark-themed card with Shield icon + "NEXUS ONE" branding
+   - Email + Password inputs with emerald focus states
+   - "Sign In" button with loading spinner, error display
+   - Demo credentials panel with Auto-Fill button
+   - Uses `signIn('credentials', { redirect: false })` from next-auth/react
+   - Framer Motion entrance animation
+
+4. **Created Auth Provider** (`/src/components/nexus/auth-provider.tsx`):
+   - SessionProvider wrapper from next-auth/react
+
+5. **Updated Layout** (`/src/app/layout.tsx`):
+   - Wrapped children with `<AuthProvider>`
+
+6. **Updated Page** (`/src/app/page.tsx`):
+   - Client-side view routing based on `appState` from auth store
+   - `useEffect` calls `checkAuth()` on mount to restore session
+   - 'landing' → LandingPage, 'login' → LoginPage, 'app' → NexusLayout
+
+7. **Updated Header** (`/src/components/nexus/header.tsx`):
+   - Added user profile dropdown with name, email, role badge
+   - "Sign Out" button calls `logout()` from auth store
+   - Click-outside detection, ChevronDown animation
+
+Stage Summary:
+- Complete auth flow: Landing → Login → Dashboard (with session persistence)
+- Stunning dark-themed landing page with Framer Motion animations
+- Clean login form with demo credentials and error handling
+- User profile dropdown with sign out in app header
+- Client-side view management via Zustand store
+- Lint passes clean, dev server running successfully

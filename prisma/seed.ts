@@ -220,6 +220,20 @@ async function main() {
   ]
   await Promise.all(auditData.map(a => prisma.auditLog.create({ data: a })))
 
+  // Create Demo User
+  const bcrypt = await import('bcryptjs')
+  const passwordHash = await bcrypt.hash('nexus123', 12)
+  await prisma.user.create({
+    data: {
+      name: 'Sarah Chen',
+      email: 'admin@nexuscorp.io',
+      passwordHash,
+      role: 'admin',
+      department: 'Executive',
+    },
+  })
+  console.log('- 1 demo user (admin@nexuscorp.io / nexus123)')
+
   console.log('Seed data created successfully!')
   console.log(`- ${1} organization`)
   console.log(`- ${teams.length} teams`)

@@ -302,3 +302,18 @@ model ChatMessage {
   @@index([agentType])
   @@index([createdAt])
 }
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  passwordHash  String
+  role          String    @default("user")
+  avatar        String?
+  department    String?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([email])
+}
