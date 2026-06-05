@@ -100,6 +100,14 @@ const stagger = {
   },
 }
 
+// Deterministic particle positions (avoids hydration mismatch from Math.random)
+const particles = Array.from({ length: 20 }, (_, i) => ({
+  left: `${((i * 7 + 13) * 17) % 100}%`,
+  top: `${((i * 11 + 29) * 23) % 100}%`,
+  duration: 3 + ((i * 3) % 4) + (((i * 7) % 10) / 10),
+  delay: ((i * 5) % 30) / 10,
+}))
+
 export function LandingPage() {
   const setAppState = useAuthStore((s) => s.setAppState)
 
@@ -125,22 +133,22 @@ export function LandingPage() {
 
         {/* Floating particles */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          {Array.from({ length: 20 }).map((_, i) => (
+          {particles.map((p, i) => (
             <motion.div
               key={i}
               className="absolute h-1 w-1 rounded-full bg-emerald-400/30"
               style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
+                left: p.left,
+                top: p.top,
               }}
               animate={{
                 y: [0, -30, 0],
                 opacity: [0.2, 0.6, 0.2],
               }}
               transition={{
-                duration: 3 + Math.random() * 4,
+                duration: p.duration,
                 repeat: Infinity,
-                delay: Math.random() * 3,
+                delay: p.delay,
                 ease: 'easeInOut',
               }}
             />
