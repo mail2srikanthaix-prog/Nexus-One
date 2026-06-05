@@ -30,14 +30,37 @@ const viewComponents: Record<ViewType, React.ComponentType> = {
 
 export function NexusLayout() {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard')
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
 
   const ViewComponent = viewComponents[currentView]
 
+  const handleViewChange = (view: ViewType) => {
+    setCurrentView(view)
+    setMobileSidebarOpen(false)
+  }
+
+  const handleSearch = () => {
+    setCurrentView('search')
+  }
+
+  const handleToggleSidebar = () => {
+    setMobileSidebarOpen((prev) => !prev)
+  }
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#0a0a0f]">
-      <Sidebar currentView={currentView} onViewChange={setCurrentView} />
+      <Sidebar
+        currentView={currentView}
+        onViewChange={handleViewChange}
+        mobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
+      />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header currentView={currentView} />
+        <Header
+          currentView={currentView}
+          onSearch={handleSearch}
+          onToggleSidebar={handleToggleSidebar}
+        />
         <main className="flex-1 overflow-y-auto overflow-x-hidden">
           <AnimatePresence mode="wait">
             <motion.div

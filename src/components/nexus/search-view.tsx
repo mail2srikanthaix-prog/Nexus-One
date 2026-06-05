@@ -1,13 +1,14 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Search, Users, FolderKanban, Gavel, Activity, Brain, CheckCircle, TrendingUp } from 'lucide-react'
+import { Search, Users, FolderKanban, Gavel, Activity, Brain, CheckCircle, TrendingUp, AlertTriangle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import type { SearchResponse } from '@/lib/types'
 
 const filterTabs = [
   { id: 'all', label: 'All', icon: Search },
@@ -51,31 +52,37 @@ const taskStatusColors: Record<string, string> = {
 export function SearchView() {
   const [query, setQuery] = useState('')
   const [activeType, setActiveType] = useState('all')
-  const [results, setResults] = useState<any>(null)
+  const [results, setResults] = useState<SearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [searchTime, setSearchTime] = useState(0)
 
-  const handleSearch = async () => {
-    if (!query.trim() && activeType === 'all') return
+  const handleSearch = useCallback(async (searchQuery?: string, searchType?: string) => {
+    const q = searchQuery ?? query
+    const t = searchType ?? activeType
+    // Don't search if both query is empty and type is 'all'
+    if (!q.trim() && t === 'all') return
     setLoading(true)
+    setError(null)
     const start = Date.now()
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${activeType}`)
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&type=${t}`)
       const data = await res.json()
       setResults(data)
       setSearchTime(Date.now() - start)
     } catch {
-      // ignore
+      setError('Search failed. Please try again.')
     } finally {
       setLoading(false)
     }
-  }
+  }, [query, activeType])
 
+  // Only auto-search when activeType changes to a non-'all' value
   useEffect(() => {
-    // Load initial results
-    handleSearch()
-    // re-run when activeType changes
-  }, [activeType])
+    if (activeType !== 'all') {
+      handleSearch(query, activeType)
+    }
+  }, [activeType]) // handleSearch is stable due to useCallback with [query, activeType]
 
   const totalResults = results?.totalResults || 0
   const categoryCount = Object.keys(results?.results || {}).length
@@ -97,7 +104,7 @@ export function SearchView() {
               />
             </div>
             <Button
-              onClick={handleSearch}
+              onClick={() => handleSearch()}
               disabled={loading}
               className="bg-emerald-500/20 px-6 text-emerald-400 hover:bg-emerald-500/30"
             >
@@ -133,6 +140,17 @@ export function SearchView() {
       {/* Results */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl">
+          {/* Error State */}
+          {error && (
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-red-400" />
+              <p className="text-sm text-gray-400">{error}</p>
+              <Button variant="outline" size="sm" className="ml-auto" onClick={() => handleSearch()}>
+                Retry
+              </Button>
+            </div>
+          )}
+
           {/* Stats */}
           {results && (
             <p className="mb-4 text-xs text-gray-500">
@@ -143,14 +161,14 @@ export function SearchView() {
           )}
 
           {/* People Results */}
-          {results?.results?.people?.length > 0 && (
+          {results?.results?.people && results.results.people.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <Users className="h-4 w-4 text-cyan-400" />
                 People
               </h3>
               <div className="space-y-2">
-                {results.results.people.map((person: any) => (
+                {results.results.people.map((person) => (
                   <Card key={person.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="flex items-center gap-4 p-4">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-500/20">
@@ -178,14 +196,14 @@ export function SearchView() {
           )}
 
           {/* Projects Results */}
-          {results?.results?.projects?.length > 0 && (
+          {results?.results?.projects && results.results.projects.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <FolderKanban className="h-4 w-4 text-amber-400" />
                 Projects
               </h3>
               <div className="space-y-2">
-                {results.results.projects.map((project: any) => (
+                {results.results.projects.map((project) => (
                   <Card key={project.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -217,14 +235,14 @@ export function SearchView() {
           )}
 
           {/* Decisions Results */}
-          {results?.results?.decisions?.length > 0 && (
+          {results?.results?.decisions && results.results.decisions.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <Gavel className="h-4 w-4 text-purple-400" />
                 Decisions
               </h3>
               <div className="space-y-2">
-                {results.results.decisions.map((decision: any) => (
+                {results.results.decisions.map((decision) => (
                   <Card key={decision.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -251,14 +269,14 @@ export function SearchView() {
           )}
 
           {/* Events Results */}
-          {results?.results?.events?.length > 0 && (
+          {results?.results?.events && results.results.events.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <Activity className="h-4 w-4 text-emerald-400" />
                 Events
               </h3>
               <div className="space-y-2">
-                {results.results.events.map((event: any) => (
+                {results.results.events.map((event) => (
                   <Card key={event.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -287,14 +305,14 @@ export function SearchView() {
           )}
 
           {/* Memories Results */}
-          {results?.results?.memories?.length > 0 && (
+          {results?.results?.memories && results.results.memories.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <Brain className="h-4 w-4 text-rose-400" />
                 Memories
               </h3>
               <div className="space-y-2">
-                {results.results.memories.map((memory: any) => (
+                {results.results.memories.map((memory) => (
                   <Card key={memory.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -328,14 +346,14 @@ export function SearchView() {
           )}
 
           {/* Tasks Results */}
-          {results?.results?.tasks?.length > 0 && (
+          {results?.results?.tasks && results.results.tasks.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <CheckCircle className="h-4 w-4 text-emerald-400" />
                 Tasks
               </h3>
               <div className="space-y-2">
-                {results.results.tasks.map((task: any) => (
+                {results.results.tasks.map((task) => (
                   <Card key={task.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="flex items-center justify-between p-4">
                       <span className="text-sm font-medium text-gray-200">{task.title}</span>
@@ -355,14 +373,14 @@ export function SearchView() {
           )}
 
           {/* Predictions Results */}
-          {results?.results?.predictions?.length > 0 && (
+          {results?.results?.predictions && results.results.predictions.length > 0 && (
             <div className="mb-6">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-300">
                 <TrendingUp className="h-4 w-4 text-amber-400" />
                 Predictions
               </h3>
               <div className="space-y-2">
-                {results.results.predictions.map((pred: any) => (
+                {results.results.predictions.map((pred) => (
                   <Card key={pred.id} className="border-[#1e1e2e] bg-[#111118]">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
@@ -383,7 +401,7 @@ export function SearchView() {
             </div>
           )}
 
-          {!results && !loading && (
+          {!results && !loading && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <Search className="mb-4 h-12 w-12 text-gray-600" />
               <p className="text-lg font-medium text-gray-400">Enterprise Search</p>

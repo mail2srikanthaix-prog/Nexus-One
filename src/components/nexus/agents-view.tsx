@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Bot, Send, Loader2, MessageSquare } from 'lucide-react'
+import { Bot, Send, Loader2, MessageSquare, AlertTriangle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import type { AgentData, AgentsResponse } from '@/lib/types'
 
 const statusColors: Record<string, string> = {
   idle: 'bg-gray-500',
@@ -30,22 +31,45 @@ interface ChatMessage {
   content: string
 }
 
+/** Parse capabilities — may be an array (from API) or JSON/comma-separated string */
+function parseCapabilities(capabilities?: string | string[]): string[] {
+  if (!capabilities) return []
+  if (Array.isArray(capabilities)) return capabilities.map((s: string) => s.trim()).filter(Boolean)
+  try {
+    const parsed = JSON.parse(capabilities)
+    if (Array.isArray(parsed)) return parsed.map((s: string) => s.trim())
+    return []
+  } catch {
+    return capabilities.split(',').map((s: string) => s.trim()).filter(Boolean)
+  }
+}
+
 export function AgentsView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<AgentsResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [selectedAgent, setSelectedAgent] = useState<any>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedAgent, setSelectedAgent] = useState<AgentData | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
+    let cancelled = false
     fetch('/api/agents')
       .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load agents. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -77,6 +101,20 @@ export function AgentsView() {
     } finally {
       setChatLoading(false)
     }
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   if (loading || !data) {
@@ -118,51 +156,54 @@ export function AgentsView() {
         <div className="w-80 shrink-0 overflow-y-auto border-r border-[#1e1e2e] p-4">
           <h3 className="mb-3 text-xs font-medium text-gray-500">Available Agents</h3>
           <div className="space-y-2">
-            {data.agents?.map((agent: any) => (
-              <motion.div
-                key={agent.id}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
-                onClick={() => {
-                  setSelectedAgent(agent)
-                  setChatMessages([])
-                }}
-                className={`cursor-pointer rounded-lg border p-3 transition-colors ${
-                  selectedAgent?.id === agent.id
-                    ? 'border-emerald-500/40 bg-emerald-500/10'
-                    : 'border-[#1e1e2e] bg-[#111118] hover:border-[#2a2a3e] hover:bg-[#16161f]'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Bot className="h-4 w-4 text-cyan-400" />
-                    <span className="text-sm font-medium text-gray-200">{agent.name}</span>
+            {data.agents?.map((agent) => {
+              const capabilities = parseCapabilities(agent.capabilities)
+              return (
+                <motion.div
+                  key={agent.id}
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                  onClick={() => {
+                    setSelectedAgent(agent)
+                    setChatMessages([])
+                  }}
+                  className={`cursor-pointer rounded-lg border p-3 transition-colors ${
+                    selectedAgent?.id === agent.id
+                      ? 'border-emerald-500/40 bg-emerald-500/10'
+                      : 'border-[#1e1e2e] bg-[#111118] hover:border-[#2a2a3e] hover:bg-[#16161f]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bot className="h-4 w-4 text-cyan-400" />
+                      <span className="text-sm font-medium text-gray-200">{agent.name}</span>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadge[agent.status] || 'bg-gray-500/20 text-gray-400'}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${statusColors[agent.status] || 'bg-gray-500'}`} />
+                      {agent.status}
+                    </span>
                   </div>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadge[agent.status] || 'bg-gray-500/20 text-gray-400'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${statusColors[agent.status] || 'bg-gray-500'}`} />
-                    {agent.status}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-gray-500">{agent.type}</p>
-                {agent.description && (
-                  <p className="mt-1 line-clamp-2 text-xs text-gray-400">{agent.description}</p>
-                )}
-                {agent.capabilities && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {agent.capabilities.split(',').map((cap: string) => (
-                      <Badge key={cap} variant="outline" className="border-[#2a2a3e] text-[9px] text-gray-500">
-                        {cap.trim()}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-                {agent.lastAction && (
-                  <p className="mt-1.5 truncate text-[10px] text-gray-500">
-                    Last: {agent.lastAction}
-                  </p>
-                )}
-              </motion.div>
-            ))}
+                  <p className="mt-1 text-xs text-gray-500">{agent.type}</p>
+                  {agent.description && (
+                    <p className="mt-1 line-clamp-2 text-xs text-gray-400">{agent.description}</p>
+                  )}
+                  {capabilities.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {capabilities.map((cap) => (
+                        <Badge key={cap} variant="outline" className="border-[#2a2a3e] text-[9px] text-gray-500">
+                          {cap}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {agent.lastAction && (
+                    <p className="mt-1.5 truncate text-[10px] text-gray-500">
+                      Last: {agent.lastAction}
+                    </p>
+                  )}
+                </motion.div>
+              )
+            })}
           </div>
         </div>
 
@@ -270,8 +311,8 @@ export function AgentsView() {
             </tr>
           </thead>
           <tbody>
-            {data.agents?.flatMap((agent: any) =>
-              (agent.actions || []).map((action: any) => (
+            {data.agents?.flatMap((agent) =>
+              (agent.actions || []).map((action) => (
                 <tr key={action.id} className="border-b border-[#1e1e2e]/50">
                   <td className="px-6 py-2 text-gray-300">{agent.name}</td>
                   <td className="px-6 py-2 text-gray-400">{action.type}</td>

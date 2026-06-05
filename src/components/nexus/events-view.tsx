@@ -17,6 +17,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import type { EventsResponse, EventData } from '@/lib/types'
 
 const severityColors: Record<string, string> = {
   info: '#06b6d4',
@@ -47,24 +48,51 @@ const severityDotColors: Record<string, string> = {
 }
 
 export function EventsView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<EventsResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState('all')
   const [autoScroll, setAutoScroll] = useState(true)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
+
+  const handleSeverityChange = (sev: string) => {
+    setLoading(true)
+    setError(null)
+    setSeverityFilter(sev)
+  }
 
   useEffect(() => {
-    const fetchEvents = () => {
-      const url = severityFilter === 'all'
-        ? '/api/events?limit=50'
-        : `/api/events?limit=50&severity=${severityFilter}`
-      fetch(url)
-        .then((r) => r.json())
-        .then((d) => setData(d))
-        .catch(() => {})
-        .finally(() => setLoading(false))
-    }
-    fetchEvents()
-  }, [severityFilter])
+    let cancelled = false
+    const url = severityFilter === 'all'
+      ? '/api/events?limit=50'
+      : `/api/events?limit=50&severity=${severityFilter}`
+    fetch(url)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load events. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [severityFilter, fetchKey])
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading || !data) {
     return (
@@ -87,7 +115,18 @@ export function EventsView() {
     .slice(0, 8)
     .map(([name, count]) => ({ name, count: count as number }))
 
-  const filteredEvents = data.events || []
+  const filteredEvents: EventData[] = data.events || []
+
+  // Compute source distribution once (fixes double-reduce bug)
+  const sourceDistribution = Object.entries(
+    filteredEvents.reduce<Record<string, number>>((acc, event) => {
+      const source = event.source || 'Unknown'
+      acc[source] = (acc[source] || 0) + 1
+      return acc
+    }, {})
+  )
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 6)
 
   return (
     <div className="flex h-full flex-col">
@@ -107,7 +146,7 @@ export function EventsView() {
               size="sm"
               variant={severityFilter === sev ? 'default' : 'ghost'}
               className={`h-7 text-xs capitalize ${severityFilter === sev ? 'bg-emerald-500/20 text-emerald-400' : 'text-gray-400'}`}
-              onClick={() => setSeverityFilter(sev)}
+              onClick={() => handleSeverityChange(sev)}
             >
               {sev}
             </Button>
@@ -135,7 +174,7 @@ export function EventsView() {
             <div className="absolute left-[76px] top-0 bottom-0 w-px bg-[#1e1e2e]" />
 
             <div className="space-y-1">
-              {filteredEvents.map((event: any, index: number) => {
+              {filteredEvents.map((event, index: number) => {
                 const SevIcon = severityIcons[event.severity] || Circle
                 return (
                   <motion.div
@@ -252,25 +291,12 @@ export function EventsView() {
               <CardTitle className="text-xs font-medium text-gray-400">Sources</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {filteredEvents.reduce((acc: Record<string, number>, event: any) => {
-                const source = event.source || 'Unknown'
-                acc[source] = (acc[source] || 0) + 1
-                return acc
-              }, {} as Record<string, number>) && Object.entries(
-                filteredEvents.reduce((acc: Record<string, number>, event: any) => {
-                  const source = event.source || 'Unknown'
-                  acc[source] = (acc[source] || 0) + 1
-                  return acc
-                }, {} as Record<string, number>)
-              )
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 6)
-                .map(([source, count]) => (
-                  <div key={source} className="flex items-center justify-between">
-                    <span className="text-xs text-gray-400">{source}</span>
-                    <span className="text-xs font-mono text-gray-500">{count}</span>
-                  </div>
-                ))}
+              {sourceDistribution.map(([source, count]) => (
+                <div key={source} className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">{source}</span>
+                  <span className="text-xs font-mono text-gray-500">{count}</span>
+                </div>
+              ))}
             </CardContent>
           </Card>
         </div>

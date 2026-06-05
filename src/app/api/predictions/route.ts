@@ -1,5 +1,17 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { apiResponse, handleApiError, methodNotAllowed, withSecurityHeaders } from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+// Method guard: only GET and HEAD allowed
+export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PUT() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['GET', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
 
 export async function GET() {
   try {
@@ -22,7 +34,7 @@ export async function GET() {
       ? predictions.reduce((acc, p) => acc + p.probability, 0) / predictions.length
       : 0
 
-    return NextResponse.json({
+    return apiResponse({
       predictions,
       typeCounts,
       impactCounts,
@@ -32,7 +44,6 @@ export async function GET() {
       total: predictions.length,
     })
   } catch (error) {
-    console.error('Predictions API error:', error)
-    return NextResponse.json({ error: 'Failed to load predictions' }, { status: 500 })
+    return handleApiError(error, 'Predictions API')
   }
 }

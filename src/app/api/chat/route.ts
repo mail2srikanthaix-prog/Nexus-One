@@ -1,5 +1,18 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import {
+  apiResponse,
+  apiErrorResponse,
+  handleApiError,
+  methodNotAllowed,
+  getClientIp,
+  RateLimiter,
+  withSecurityHeaders,
+} from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+// ── Constants ───────────────────────────────────────────────────────────────
+
+const VALID_AGENT_TYPES = ['ceo', 'cto', 'cfo', 'coo', 'cro', 'security', 'hr', 'knowledge', 'workflow', 'monitoring'] as const
 
 const AGENT_SYSTEM_PROMPTS: Record<string, string> = {
   ceo: `You are the CEO Agent of NEXUS ONE, an Enterprise AI Operating System. You provide strategic insights, executive briefings, and organizational direction. You have access to company data including projects, teams, financials, and predictions. Be decisive, strategic, and forward-thinking. Provide actionable recommendations with confidence levels. Format responses with clear sections and bullet points when appropriate.`,
@@ -14,15 +27,156 @@ const AGENT_SYSTEM_PROMPTS: Record<string, string> = {
   monitoring: `You are the Monitoring Agent of NEXUS ONE. You detect anomalies, monitor system performance, manage alerts, and ensure observability. You understand infrastructure metrics, application performance, and error patterns. Provide real-time status updates with root cause analysis.`,
 }
 
+// ── Rate Limiter: 10 requests per minute per IP ─────────────────────────────
+
+const chatRateLimiter = new RateLimiter(10, 60_000)
+
+// ── ZAI Singleton Cache ─────────────────────────────────────────────────────
+
+let zaiInstance: InstanceType<typeof import('z-ai-web-dev-sdk').default> | null = null
+let zaiInitPromise: Promise<InstanceType<typeof import('z-ai-web-dev-sdk').default>> | null = null
+
+/**
+ * Get or create the ZAI SDK singleton.
+ * Caches the instance and the init promise to avoid creating a new one per request.
+ */
+async function getZAI(): Promise<InstanceType<typeof import('z-ai-web-dev-sdk').default>> {
+  if (zaiInstance) return zaiInstance
+
+  // If initialization is already in-flight, await that promise
+  if (zaiInitPromise) return zaiInitPromise
+
+  zaiInitPromise = (async () => {
+    const ZAI = (await import('z-ai-web-dev-sdk')).default
+    zaiInstance = await ZAI.create()
+    return zaiInstance
+  })()
+
+  try {
+    return await zaiInitPromise
+  } catch (error) {
+    // Reset so a retry can attempt re-initialization
+    zaiInitPromise = null
+    zaiInstance = null
+    throw error
+  }
+}
+
+// ── Input Validation ────────────────────────────────────────────────────────
+
+interface HistoryItem {
+  role: string
+  content: string
+}
+
+function validateChatInput(body: unknown): {
+  valid: boolean
+  message?: string
+  agentType?: string
+  history?: HistoryItem[]
+} {
+  if (!body || typeof body !== 'object') {
+    return { valid: false, message: 'Request body must be a JSON object' }
+  }
+
+  const { message, agentType, history } = body as Record<string, unknown>
+
+  // Validate message
+  if (typeof message !== 'string') {
+    return { valid: false, message: 'message must be a non-empty string' }
+  }
+  const trimmedMessage = message.trim()
+  if (trimmedMessage.length === 0) {
+    return { valid: false, message: 'message must not be empty' }
+  }
+  if (trimmedMessage.length > 2000) {
+    return { valid: false, message: 'message must be at most 2000 characters' }
+  }
+
+  // Validate agentType
+  if (agentType !== undefined && agentType !== null) {
+    if (typeof agentType !== 'string' || !VALID_AGENT_TYPES.includes(agentType as typeof VALID_AGENT_TYPES[number])) {
+      return { valid: false, message: `agentType must be one of: ${VALID_AGENT_TYPES.join(', ')}` }
+    }
+  }
+
+  // Validate history
+  if (history !== undefined && history !== null) {
+    if (!Array.isArray(history)) {
+      return { valid: false, message: 'history must be an array' }
+    }
+    if (history.length > 20) {
+      return { valid: false, message: 'history must contain at most 20 items' }
+    }
+    for (let i = 0; i < history.length; i++) {
+      const item = history[i]
+      if (!item || typeof item !== 'object') {
+        return { valid: false, message: `history[${i}] must be an object` }
+      }
+      const h = item as Record<string, unknown>
+      if (h.role !== 'user' && h.role !== 'assistant') {
+        return { valid: false, message: `history[${i}].role must be 'user' or 'assistant'` }
+      }
+      if (typeof h.content !== 'string') {
+        return { valid: false, message: `history[${i}].content must be a string` }
+      }
+      if (h.content.length > 2000) {
+        return { valid: false, message: `history[${i}].content must be at most 2000 characters` }
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    message: trimmedMessage,
+    agentType: (agentType as string) || 'ceo',
+    history: (history as HistoryItem[]) || [],
+  }
+}
+
+// ── Method Guards ───────────────────────────────────────────────────────────
+
+export async function GET() {
+  return methodNotAllowed(['POST', 'HEAD'])
+}
+export async function PUT() { return methodNotAllowed(['POST', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['POST', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['POST', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
+
+// ── POST Handler ────────────────────────────────────────────────────────────
+
 export async function POST(request: Request) {
   try {
-    const { message, agentType = 'ceo', history = [] } = await request.json()
-
-    if (!message) {
-      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
+    // ── Rate Limiting ───────────────────────────────────────────────────
+    const clientIp = getClientIp(request)
+    const rateCheck = chatRateLimiter.check(clientIp)
+    if (!rateCheck.allowed) {
+      const response = apiErrorResponse('Rate limit exceeded', 'RATE_LIMITED', 429)
+      response.headers.set('Retry-After', String(rateCheck.retryAfter))
+      return response
     }
 
-    // Fetch relevant context from the database
+    // ── Parse & Validate Body ───────────────────────────────────────────
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return apiErrorResponse('Invalid JSON body', 'INVALID_BODY', 400)
+    }
+
+    const validation = validateChatInput(body)
+    if (!validation.valid) {
+      return apiErrorResponse(validation.message!, 'INVALID_INPUT', 400)
+    }
+
+    const { message, agentType, history } = validation
+
+    // ── Fetch Context ───────────────────────────────────────────────────
     const [recentEvents, activeProjects, activePredictions, recentTasks] = await Promise.all([
       db.event.findMany({ orderBy: { createdAt: 'desc' }, take: 5 }),
       db.project.findMany({ where: { status: 'active' }, take: 5 }),
@@ -38,21 +192,32 @@ Current Company Context:
 - In-Progress Tasks: ${recentTasks.map(t => t.title).join('; ')}
 `
 
-    const systemPrompt = (AGENT_SYSTEM_PROMPTS[agentType] || AGENT_SYSTEM_PROMPTS.ceo) + '\n\n' + contextData
+    const systemPrompt = (AGENT_SYSTEM_PROMPTS[agentType!] || AGENT_SYSTEM_PROMPTS.ceo) + '\n\n' + contextData
 
-    // Use z-ai-web-dev-sdk for LLM
-    const ZAI = (await import('z-ai-web-dev-sdk')).default
-    const zai = await ZAI.create()
+    // ── Get ZAI Instance (cached singleton) ─────────────────────────────
+    let zai: InstanceType<typeof import('z-ai-web-dev-sdk').default>
+    try {
+      zai = await getZAI()
+    } catch (initError) {
+      console.error('ZAI SDK initialization failed:', initError)
+      return apiErrorResponse(
+        'AI service is currently unavailable. Please try again later.',
+        'AI_SERVICE_UNAVAILABLE',
+        503
+      )
+    }
 
+    // ── Build Messages ──────────────────────────────────────────────────
     const messages = [
       { role: 'assistant' as const, content: systemPrompt },
-      ...history.map((h: { role: string; content: string }) => ({
+      ...history!.map((h: HistoryItem) => ({
         role: h.role as 'user' | 'assistant',
         content: h.content,
       })),
-      { role: 'user' as const, content: message },
+      { role: 'user' as const, content: message! },
     ]
 
+    // ── Call LLM ────────────────────────────────────────────────────────
     const completion = await zai.chat.completions.create({
       messages,
       thinking: { type: 'disabled' },
@@ -60,29 +225,22 @@ Current Company Context:
 
     const response = completion.choices[0]?.message?.content || 'I apologize, but I was unable to generate a response. Please try again.'
 
-    // Save chat message to database
-    await db.chatMessage.create({
-      data: {
-        role: 'user',
-        content: message,
-        agentType,
-      },
-    })
-    await db.chatMessage.create({
-      data: {
-        role: 'assistant',
-        content: response,
-        agentType,
-      },
-    })
+    // ── Persist Chat Messages ───────────────────────────────────────────
+    await Promise.all([
+      db.chatMessage.create({
+        data: { role: 'user', content: message!, agentType: agentType! },
+      }),
+      db.chatMessage.create({
+        data: { role: 'assistant', content: response, agentType: agentType! },
+      }),
+    ])
 
-    return NextResponse.json({
+    return apiResponse({
       response,
-      agentType,
+      agentType: agentType!,
       timestamp: new Date().toISOString(),
     })
   } catch (error) {
-    console.error('Chat API error:', error)
-    return NextResponse.json({ error: 'Failed to generate response' }, { status: 500 })
+    return handleApiError(error, 'Chat API')
   }
 }

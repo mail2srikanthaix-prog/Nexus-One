@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Brain, Target, Clock, ListChecks, Settings, Search } from 'lucide-react'
+import { Brain, Target, Clock, ListChecks, Settings, Search, AlertTriangle } from 'lucide-react'
 import {
   BarChart,
   Bar,
@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import type { MemoryResponse } from '@/lib/types'
 
 
 const typeIcons: Record<string, React.ElementType> = {
@@ -53,22 +54,70 @@ const memoryTabs = [
 ]
 
 export function MemoryView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<MemoryResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
+
+  const handleTabChange = (tab: string) => {
+    setLoading(true)
+    setError(null)
+    setActiveTab(tab)
+  }
 
   useEffect(() => {
+    let cancelled = false
     const params = new URLSearchParams()
     if (activeTab !== 'all') params.set('type', activeTab)
-    if (searchQuery) params.set('q', searchQuery)
+    if (debouncedQuery) params.set('q', debouncedQuery)
     const url = `/api/memory${params.toString() ? `?${params.toString()}` : ''}`
     fetch(url)
       .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [activeTab, searchQuery])
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load memories. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [activeTab, debouncedQuery, fetchKey])
+
+  // Debounce search input — only update debouncedQuery after 300ms of inactivity
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setDebouncedQuery(value)
+    }, 300)
+  }
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading || !data) {
     return (
@@ -102,7 +151,7 @@ export function MemoryView() {
                 size="sm"
                 variant={activeTab === tab.id ? 'default' : 'ghost'}
                 className={`h-7 text-xs ${activeTab === tab.id ? 'bg-emerald-500/20 text-emerald-400' : 'text-gray-400'}`}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => handleTabChange(tab.id)}
               >
                 {tab.label}
               </Button>
@@ -115,7 +164,7 @@ export function MemoryView() {
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
               <Input
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Search memories..."
                 className="h-7 border-[#2a2a3e] bg-[#111118] pl-9 text-xs text-gray-200 placeholder:text-gray-600"
               />
@@ -129,7 +178,7 @@ export function MemoryView() {
         {/* Memory Cards */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {memories.map((memory: any) => {
+            {memories.map((memory) => {
               const Icon = typeIcons[memory.type] || Brain
               const importance = Math.round(memory.importance * 100)
               const importanceColor = importance > 70 ? 'text-red-400' : importance > 40 ? 'text-amber-400' : 'text-emerald-400'

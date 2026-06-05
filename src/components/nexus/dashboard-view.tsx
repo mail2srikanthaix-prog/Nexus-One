@@ -26,7 +26,36 @@ import {
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import type { DashboardData } from '@/lib/types'
+
+/** Error state UI with retry button — shared pattern across views */
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <AlertTriangle className="h-8 w-8 text-red-400" />
+        <p className="text-sm text-gray-400">{message}</p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Loading spinner — shared pattern across views */
+function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <span className="text-sm text-gray-400">{label}</span>
+      </div>
+    </div>
+  )
+}
 
 const statusColors: Record<string, string> = {
   idle: 'bg-gray-500',
@@ -58,7 +87,8 @@ const severityIcons: Record<string, string> = {
   critical: '⚡',
 }
 
-// Mock chart data
+// Sample event trend data — this represents a 7-day view which is not
+// available from the current API, so we use representative sample data.
 const eventTrendData = [
   { day: 'Mon', events: 12 },
   { day: 'Tue', events: 19 },
@@ -67,13 +97,6 @@ const eventTrendData = [
   { day: 'Fri', events: 15 },
   { day: 'Sat', events: 6 },
   { day: 'Sun', events: 10 },
-]
-
-const taskStatusData = [
-  { status: 'To Do', count: 8 },
-  { status: 'In Progress', count: 12 },
-  { status: 'Review', count: 5 },
-  { status: 'Done', count: 15 },
 ]
 
 const container = {
@@ -90,29 +113,42 @@ const item = {
 }
 
 export function DashboardView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
+    let cancelled = false
     fetch('/api/dashboard')
       .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load dashboard data. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
+
+  if (error) {
+    return <ErrorState message={error} onRetry={handleRetry} />
+  }
 
   if (loading || !data) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-          <span className="text-sm text-gray-400">Loading dashboard...</span>
-        </div>
-      </div>
-    )
+    return <LoadingState label="Loading dashboard..." />
   }
 
   const m = data.metrics
+
+  // Compute task distribution from API data
+  const taskStatusData = [
+    { status: 'Active', count: m.activeTasks },
+    { status: 'Completed', count: m.completedTasks },
+  ]
 
   const metricCards = [
     { label: 'Total People', value: m.totalPeople, icon: Users, color: 'text-emerald-400', bgColor: 'bg-emerald-500/10', borderColor: 'border-emerald-500/20' },
@@ -172,7 +208,7 @@ export function DashboardView() {
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 sm:grid-cols-2">
-                {data.agents?.slice(0, 6).map((agent: any) => (
+                {data.agents?.slice(0, 6).map((agent) => (
                   <div
                     key={agent.id}
                     className={`rounded-lg border-l-2 bg-[#16161f] p-3 ${
@@ -215,7 +251,7 @@ export function DashboardView() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {data.predictions?.slice(0, 5).map((pred: any) => {
+              {data.predictions?.slice(0, 5).map((pred) => {
                 const prob = Math.round(pred.probability * 100)
                 const impactColor =
                   pred.impact === 'critical'
@@ -270,7 +306,7 @@ export function DashboardView() {
             </CardHeader>
             <CardContent>
               <div className="max-h-64 space-y-2 overflow-y-auto">
-                {data.recentEvents?.map((event: any) => (
+                {data.recentEvents?.map((event) => (
                   <div
                     key={event.id}
                     className="flex items-start gap-3 rounded-lg bg-[#16161f] p-3"
@@ -300,10 +336,10 @@ export function DashboardView() {
 
         {/* Right column: Charts + Project Health */}
         <motion.div variants={item} className="space-y-6">
-          {/* Event Trend Chart */}
+          {/* Event Trend Chart — sample data, see comment at top */}
           <Card className="border-[#1e1e2e] bg-[#111118]">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-gray-400">Event Trend (7 Days)</CardTitle>
+              <CardTitle className="text-xs font-medium text-gray-400">Event Trend (7 Days) — Sample</CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={100}>
@@ -325,7 +361,7 @@ export function DashboardView() {
             </CardContent>
           </Card>
 
-          {/* Task Distribution */}
+          {/* Task Distribution — computed from API data */}
           <Card className="border-[#1e1e2e] bg-[#111118]">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-medium text-gray-400">Task Distribution</CardTitle>
@@ -334,7 +370,7 @@ export function DashboardView() {
               <ResponsiveContainer width="100%" height={100}>
                 <BarChart data={taskStatusData} layout="vertical">
                   <XAxis type="number" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                  <YAxis dataKey="status" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} width={60} />
+                  <YAxis dataKey="status" type="category" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} width={70} />
                   <Tooltip
                     contentStyle={{ background: '#16161f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
                     labelStyle={{ color: '#9ca3af' }}
@@ -351,7 +387,7 @@ export function DashboardView() {
               <CardTitle className="text-xs font-medium text-gray-400">Project Health</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {data.projects?.slice(0, 4).map((project: any) => (
+              {data.projects?.slice(0, 4).map((project) => (
                 <div key={project.id} className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="truncate text-xs text-gray-300">{project.name}</span>
@@ -373,7 +409,7 @@ export function DashboardView() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {data.connectors?.map((conn: any) => (
+                {data.connectors?.map((conn) => (
                   <div
                     key={conn.id}
                     className="flex items-center gap-1.5 rounded-md bg-[#16161f] px-2 py-1"

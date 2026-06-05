@@ -2,10 +2,11 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ZoomIn, ZoomOut, Maximize, Filter } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Filter, AlertTriangle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import type { GraphData, GraphNode, GraphEdge } from '@/lib/types'
 
 const typeColors: Record<string, string> = {
   person: '#06b6d4',
@@ -29,32 +30,10 @@ const typeLabels: Record<string, string> = {
   data_asset: 'Data Assets',
 }
 
-interface GraphNode {
-  id: string
-  type: string
-  name: string
-  x: number
-  y: number
-  vx: number
-  vy: number
-  relationCount: number
-}
-
-interface GraphEdge {
-  id: string
-  source: string
-  target: string
-  type: string
-  weight: number
-  sourceName: string
-  targetName: string
-}
-
-type ApiData = Record<string, unknown>
-
 export function GraphView() {
-  const [data, setData] = useState<ApiData>(null)
+  const [data, setData] = useState<GraphData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState('all')
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null)
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
@@ -73,22 +52,20 @@ export function GraphView() {
   const hoveredNodeRef = useRef<GraphNode | null>(null)
   const selectedNodeRef = useRef<GraphNode | null>(null)
 
-  useEffect(() => {
-    activeFilterRef.current = activeFilter
-  }, [activeFilter])
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
-    hoveredNodeRef.current = hoveredNode
-  }, [hoveredNode])
-
-  useEffect(() => {
-    selectedNodeRef.current = selectedNode
-  }, [selectedNode])
-
-  useEffect(() => {
+    let cancelled = false
     fetch('/api/graph')
       .then((r) => r.json())
       .then((d) => {
+        if (cancelled) return
         setData(d)
         const cx = 600
         const cy = 400
@@ -105,9 +82,22 @@ export function GraphView() {
         })
         edgesRef.current = d.edges
       })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .catch(() => { if (!cancelled) setError('Failed to load graph data. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
+
+  useEffect(() => {
+    activeFilterRef.current = activeFilter
+  }, [activeFilter])
+
+  useEffect(() => {
+    hoveredNodeRef.current = hoveredNode
+  }, [hoveredNode])
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode
+  }, [selectedNode])
 
   // Main animation loop - all simulation and drawing inlined
   useEffect(() => {
@@ -119,8 +109,15 @@ export function GraphView() {
     const resizeCanvas = () => {
       const parent = canvas.parentElement
       if (parent) {
-        canvas.width = parent.clientWidth
-        canvas.height = parent.clientHeight
+        const dpr = window.devicePixelRatio || 1
+        const width = parent.clientWidth
+        const height = parent.clientHeight
+        canvas.width = width * dpr
+        canvas.height = height * dpr
+        canvas.style.width = `${width}px`
+        canvas.style.height = `${height}px`
+        const ctx = canvas.getContext('2d')
+        if (ctx) ctx.scale(dpr, dpr)
       }
     }
     resizeCanvas()
@@ -197,7 +194,9 @@ export function GraphView() {
       const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      const { width, height } = canvas
+      // Use CSS dimensions for coordinate system (DPR scaling already applied in resizeCanvas)
+      const width = canvas.clientWidth
+      const height = canvas.clientHeight
       const transform = transformRef.current
       const nodes = nodesRef.current
       const edges = edgesRef.current
@@ -205,6 +204,9 @@ export function GraphView() {
       const hov = hoveredNodeRef.current
       const sel = selectedNodeRef.current
 
+      // Reset transform before clearing — needed because DPR scaling was applied
+      const dpr = window.devicePixelRatio || 1
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, width, height)
       ctx.save()
       ctx.translate(transform.x, transform.y)
@@ -373,6 +375,20 @@ export function GraphView() {
     transformRef.current.scale = newScale
   }, [])
 
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (loading || !data) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -450,6 +466,8 @@ export function GraphView() {
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onWheel={handleWheel}
+          role="img"
+          aria-label="Knowledge graph visualization showing entities and their relationships"
         />
 
         {/* Tooltip */}

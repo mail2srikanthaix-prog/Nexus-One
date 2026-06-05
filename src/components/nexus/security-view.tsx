@@ -5,7 +5,9 @@ import { motion } from 'framer-motion'
 import { Shield, AlertTriangle, Link2, Eye, Lock } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import type { SecurityResponse } from '@/lib/types'
 
 const severityColors: Record<string, string> = {
   info: 'bg-cyan-500/20 text-cyan-400',
@@ -22,16 +24,40 @@ const connectorStatusColors: Record<string, string> = {
 }
 
 export function SecurityView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<SecurityResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
+    let cancelled = false
     fetch('/api/security')
       .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load security dashboard. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading || !data) {
     return (
@@ -167,7 +193,7 @@ export function SecurityView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.auditLogs?.map((log: any) => (
+                  {data.auditLogs?.map((log) => (
                     <tr key={log.id} className="border-b border-[#1e1e2e]/50">
                       <td className="py-2 font-mono text-gray-500">
                         {new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -201,7 +227,7 @@ export function SecurityView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {data.securityConnectors?.map((conn: any) => (
+                {data.securityConnectors?.map((conn) => (
                   <div key={conn.id} className="flex items-center justify-between rounded-lg bg-[#16161f] p-3">
                     <div className="flex items-center gap-3">
                       <span className={`h-2.5 w-2.5 rounded-full ${connectorStatusColors[conn.status] || 'bg-gray-500'}`} />
@@ -236,7 +262,7 @@ export function SecurityView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {data.highRiskPeople?.slice(0, 6).map((person: any) => {
+                {data.highRiskPeople?.slice(0, 6).map((person) => {
                   const riskPct = Math.min(100, Math.round(person.riskScore * 5))
                   return (
                     <div key={person.id} className="rounded-lg bg-[#16161f] p-3">
@@ -268,7 +294,7 @@ export function SecurityView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {data.securityPredictions?.slice(0, 4).map((pred: any) => {
+                {data.securityPredictions?.slice(0, 4).map((pred) => {
                   const prob = Math.round(pred.probability * 100)
                   return (
                     <div key={pred.id} className="rounded-lg bg-[#16161f] p-3">

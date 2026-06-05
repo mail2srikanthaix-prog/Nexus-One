@@ -1,87 +1,126 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { apiResponse, handleApiError, methodNotAllowed, withSecurityHeaders } from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+// Method guard: only GET and HEAD allowed
+export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PUT() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['GET', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
 
 export async function GET() {
   try {
+    // ── Count-based metrics (no full row fetch) ──────────────────────────
     const [
-      organizations,
-      people,
-      teams,
-      projects,
-      tasks,
-      events,
-      agents,
-      predictions,
-      connectors,
-      memories,
+      totalPeople,
+      activePeople,
+      totalTeams,
+      totalProjects,
+      activeProjectCount,
+      totalTasks,
+      activeTasks,
+      completedTasks,
+      criticalEventsCount,
+      totalEvents,
+      activePredictions,
+      criticalPredictions,
+      connectedConnectors,
+      totalConnectors,
+      agentStatusIdle,
+      agentStatusThinking,
+      agentStatusExecuting,
+      agentStatusReporting,
     ] = await Promise.all([
-      db.organization.findMany(),
-      db.person.findMany(),
-      db.team.findMany(),
-      db.project.findMany(),
-      db.task.findMany(),
-      db.event.findMany({ orderBy: { createdAt: 'desc' }, take: 20 }),
-      db.agent.findMany({ include: { actions: { orderBy: { createdAt: 'desc' }, take: 3 } } }),
-      db.prediction.findMany({ where: { status: 'active' } }),
-      db.connector.findMany(),
-      db.memory.findMany({ orderBy: { importance: 'desc' }, take: 5 }),
+      db.person.count(),
+      db.person.count({ where: { status: 'active' } }),
+      db.team.count(),
+      db.project.count(),
+      db.project.count({ where: { status: 'active' } }),
+      db.task.count(),
+      db.task.count({ where: { status: { not: 'done' } } }),
+      db.task.count({ where: { status: 'done' } }),
+      db.event.count({ where: { severity: { in: ['critical', 'error'] } } }),
+      db.event.count(),
+      db.prediction.count({ where: { status: 'active' } }),
+      db.prediction.count({ where: { status: 'active', probability: { gt: 0.6 } } }),
+      db.connector.count({ where: { status: 'connected' } }),
+      db.connector.count(),
+      db.agent.count({ where: { status: 'idle' } }),
+      db.agent.count({ where: { status: 'thinking' } }),
+      db.agent.count({ where: { status: 'executing' } }),
+      db.agent.count({ where: { status: 'reporting' } }),
     ])
 
-    const activeProjects = projects.filter(p => p.status === 'active')
-    const criticalPredictions = predictions.filter(p => p.probability > 0.6)
-    const activeTasks = tasks.filter(t => t.status !== 'done')
-    const completedTasks = tasks.filter(t => t.status === 'done')
-    const criticalEvents = events.filter(e => e.severity === 'critical' || e.severity === 'error')
-    const connectedCount = connectors.filter(c => c.status === 'connected').length
-    const totalRecords = connectors.reduce((acc, c) => acc + (c.recordCount || 0), 0)
+    // ── Aggregated data for budget / records / health ────────────────────
+    const [projectBudgets, connectorRecords, org, activeProjectsWithHealth] = await Promise.all([
+      db.project.findMany({ select: { budget: true, budgetUsed: true, status: true } }),
+      db.connector.findMany({ select: { recordCount: true } }),
+      db.organization.findFirst(),
+      db.project.findMany({
+        where: { status: 'active' },
+        select: { health: true },
+      }),
+    ])
 
-    const totalBudget = projects.reduce((acc, p) => acc + (p.budget || 0), 0)
-    const totalBudgetUsed = projects.reduce((acc, p) => acc + (p.budgetUsed || 0), 0)
-
-    const avgHealth = activeProjects.length > 0
-      ? activeProjects.reduce((acc, p) => acc + p.health, 0) / activeProjects.length
+    const totalBudget = projectBudgets.reduce((acc, p) => acc + (p.budget || 0), 0)
+    const totalBudgetUsed = projectBudgets.reduce((acc, p) => acc + (p.budgetUsed || 0), 0)
+    const totalRecords = connectorRecords.reduce((acc, c) => acc + (c.recordCount || 0), 0)
+    const avgHealth = activeProjectsWithHealth.length > 0
+      ? activeProjectsWithHealth.reduce((acc, p) => acc + p.health, 0) / activeProjectsWithHealth.length
       : 0
 
-    const org = organizations[0]
+    // ── Data for display lists ───────────────────────────────────────────
+    const [recentEvents, agents, predictions, topMemories, activeProjects, connectors] = await Promise.all([
+      db.event.findMany({ orderBy: { createdAt: 'desc' }, take: 20 }),
+      db.agent.findMany({ include: { actions: { orderBy: { createdAt: 'desc' }, take: 3 } } }),
+      db.prediction.findMany({ where: { status: 'active' }, take: 6 }),
+      db.memory.findMany({ orderBy: { importance: 'desc' }, take: 5 }),
+      db.project.findMany({ where: { status: 'active' }, take: 6 }),
+      db.connector.findMany(),
+    ])
 
-    return NextResponse.json({
+    return apiResponse({
       organization: org,
       metrics: {
-        totalPeople: people.length,
-        activePeople: people.filter(p => p.status === 'active').length,
-        totalTeams: teams.length,
-        totalProjects: projects.length,
-        activeProjects: activeProjects.length,
-        totalTasks: tasks.length,
-        activeTasks: activeTasks.length,
-        completedTasks: completedTasks.length,
-        criticalEvents: criticalEvents.length,
-        totalEvents: events.length,
-        activePredictions: predictions.length,
-        criticalPredictions: criticalPredictions.length,
-        connectedConnectors: connectedCount,
-        totalConnectors: connectors.length,
+        totalPeople,
+        activePeople,
+        totalTeams,
+        totalProjects,
+        activeProjects: activeProjectCount,
+        totalTasks,
+        activeTasks,
+        completedTasks,
+        criticalEvents: criticalEventsCount,
+        totalEvents,
+        activePredictions,
+        criticalPredictions,
+        connectedConnectors,
+        totalConnectors,
         totalRecords,
         totalBudget,
         totalBudgetUsed,
         budgetUtilization: totalBudget > 0 ? (totalBudgetUsed / totalBudget * 100).toFixed(1) : '0',
         avgProjectHealth: avgHealth.toFixed(0),
         agentStatus: {
-          idle: agents.filter(a => a.status === 'idle').length,
-          thinking: agents.filter(a => a.status === 'thinking').length,
-          executing: agents.filter(a => a.status === 'executing').length,
-          reporting: agents.filter(a => a.status === 'reporting').length,
+          idle: agentStatusIdle,
+          thinking: agentStatusThinking,
+          executing: agentStatusExecuting,
+          reporting: agentStatusReporting,
         },
       },
-      recentEvents: events.slice(0, 10),
+      recentEvents: recentEvents.slice(0, 10),
       agents,
-      predictions: predictions.slice(0, 6),
-      topMemories: memories,
-      projects: activeProjects.slice(0, 6),
+      predictions,
+      topMemories,
+      projects: activeProjects,
       connectors,
     })
   } catch (error) {
-    console.error('Dashboard API error:', error)
-    return NextResponse.json({ error: 'Failed to load dashboard data' }, { status: 500 })
+    return handleApiError(error, 'Dashboard API')
   }
 }

@@ -1,5 +1,17 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { apiResponse, handleApiError, methodNotAllowed, withSecurityHeaders } from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+// Method guard: only GET and HEAD allowed
+export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PUT() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['GET', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
 
 export async function GET() {
   try {
@@ -31,7 +43,7 @@ export async function GET() {
       severityCounts[log.severity] = (severityCounts[log.severity] || 0) + 1
     }
 
-    return NextResponse.json({
+    return apiResponse({
       securityScore,
       auditLogs,
       securityConnectors,
@@ -42,7 +54,6 @@ export async function GET() {
       totalAuditLogs: auditLogs.length,
     })
   } catch (error) {
-    console.error('Security API error:', error)
-    return NextResponse.json({ error: 'Failed to load security data' }, { status: 500 })
+    return handleApiError(error, 'Security API')
   }
 }

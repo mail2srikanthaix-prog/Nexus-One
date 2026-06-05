@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
+import type { EventsResponse, EventData } from '@/lib/types'
 
 const typeIcons: Record<string, React.ElementType> = {
   decision: Gavel,
@@ -46,21 +47,28 @@ const decisionStatusColors: Record<string, string> = {
 }
 
 export function TimemachineView() {
-  const [eventsData, setEventsData] = useState<any>(null)
+  const [eventsData, setEventsData] = useState<EventsResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [timeIndex, setTimeIndex] = useState(100)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/events?limit=100').then((r) => r.json()),
-    ])
-      .then(([events]) => {
-        setEventsData(events)
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+    let cancelled = false
+    fetch('/api/events?limit=100')
+      .then((r) => r.json())
+      .then((events) => { if (!cancelled) setEventsData(events) })
+      .catch(() => { if (!cancelled) setError('Failed to load time machine data. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
 
   // Auto-play
   useEffect(() => {
@@ -95,6 +103,20 @@ export function TimemachineView() {
     { decision: 'Expand to EU', expected: 60, actual: 45 },
   ]
 
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   if (loading || !eventsData) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -118,7 +140,7 @@ export function TimemachineView() {
     earliestEvent.getTime() + (latestEvent.getTime() - earliestEvent.getTime()) * (timeIndex / 100)
   )
 
-  const visibleEvents = timelineItems.filter((e) => {
+  const visibleEvents = timelineItems.filter((e: EventData) => {
     const eventDate = new Date(e.createdAt)
     return eventDate <= currentTime
   })
@@ -177,7 +199,7 @@ export function TimemachineView() {
             <div className="absolute left-[100px] top-0 bottom-0 w-px bg-[#1e1e2e]" />
 
             <div className="space-y-1">
-              {visibleEvents.reverse().map((event: any, index: number) => {
+              {[...visibleEvents].reverse().map((event: EventData, index: number) => {
                 const eventType = event.type === 'decision' ? 'decision' : event.type === 'deployment' ? 'deployment' : event.severity === 'critical' ? 'incident' : 'event'
                 const Icon = typeIcons[eventType] || Activity
                 const iconColor = typeColors[eventType] || '#10b981'
@@ -258,13 +280,13 @@ export function TimemachineView() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">Critical</span>
                   <span className="text-xs font-mono text-red-400">
-                    {visibleEvents.filter((e: any) => e.severity === 'critical').length}
+                    {visibleEvents.filter((e: EventData) => e.severity === 'critical').length}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-500">Warnings</span>
                   <span className="text-xs font-mono text-amber-400">
-                    {visibleEvents.filter((e: any) => e.severity === 'warning').length}
+                    {visibleEvents.filter((e: EventData) => e.severity === 'warning').length}
                   </span>
                 </div>
               </div>

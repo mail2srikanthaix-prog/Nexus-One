@@ -16,7 +16,9 @@ import {
 } from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import type { PredictionsResponse } from '@/lib/types'
 
 const impactColors: Record<string, string> = {
   low: 'bg-gray-500/20 text-gray-400',
@@ -61,17 +63,41 @@ const item = {
 }
 
 export function PredictionsView() {
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<PredictionsResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [fetchKey, setFetchKey] = useState(0)
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setFetchKey((k) => k + 1)
+  }
 
   useEffect(() => {
+    let cancelled = false
     fetch('/api/predictions')
       .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .then((d) => { if (!cancelled) setData(d) })
+      .catch(() => { if (!cancelled) setError('Failed to load predictions. Please try again.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <AlertTriangle className="h-8 w-8 text-red-400" />
+          <p className="text-sm text-gray-400">{error}</p>
+          <Button variant="outline" size="sm" onClick={handleRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (loading || !data) {
     return (
@@ -136,7 +162,7 @@ export function PredictionsView() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Prediction Cards */}
         <div className="space-y-4 lg:col-span-2">
-          {data.predictions?.map((pred: any) => {
+          {data.predictions?.map((pred) => {
             const prob = Math.round(pred.probability * 100)
             const isExpanded = expandedId === pred.id
             const probColor = prob > 60 ? 'text-red-400' : prob > 30 ? 'text-amber-400' : 'text-emerald-400'

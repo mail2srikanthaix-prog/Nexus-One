@@ -1,12 +1,46 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import {
+  apiResponse,
+  apiErrorResponse,
+  handleApiError,
+  methodNotAllowed,
+  validateString,
+  validateEnum,
+  withSecurityHeaders,
+} from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+const VALID_SEARCH_TYPES = ['all', 'people', 'projects', 'decisions', 'events', 'memories', 'tasks', 'predictions'] as const
+
+// Method guard: only GET and HEAD allowed
+export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PUT() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['GET', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const q = searchParams.get('q') || ''
-    const type = searchParams.get('type') || 'all'
 
+    // ── Input Validation ───────────────────────────────────────────────
+    const qResult = validateString(searchParams.get('q'), 'q', { maxLen: 200 })
+    if (!qResult.valid) {
+      return apiErrorResponse(qResult.error!, 'INVALID_QUERY', 400)
+    }
+    const q = qResult.value
+
+    const typeResult = validateEnum(searchParams.get('type'), 'type', [...VALID_SEARCH_TYPES])
+    if (!typeResult.valid) {
+      return apiErrorResponse(typeResult.error!, 'INVALID_TYPE', 400)
+    }
+    const type = typeResult.value || 'all'
+
+    // ── Search Execution ───────────────────────────────────────────────
     const results: Record<string, unknown[]> = {}
 
     if (type === 'all' || type === 'people') {
@@ -60,14 +94,13 @@ export async function GET(request: Request) {
 
     const totalResults = Object.values(results).reduce((acc, arr) => acc + arr.length, 0)
 
-    return NextResponse.json({
+    return apiResponse({
       query: q,
       type,
       totalResults,
       results,
     })
   } catch (error) {
-    console.error('Search API error:', error)
-    return NextResponse.json({ error: 'Search failed' }, { status: 500 })
+    return handleApiError(error, 'Search API')
   }
 }

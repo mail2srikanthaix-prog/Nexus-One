@@ -1,21 +1,31 @@
-import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { apiResponse, handleApiError, methodNotAllowed, withSecurityHeaders } from '@/lib/api-utils'
+import { NextResponse } from 'next/server'
+
+// Method guard: only GET and HEAD allowed
+export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PUT() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function DELETE() { return methodNotAllowed(['GET', 'HEAD']) }
+export async function PATCH() { return methodNotAllowed(['GET', 'HEAD']) }
+
+export async function HEAD() {
+  const response = new NextResponse(null, { status: 200 })
+  return withSecurityHeaders(response)
+}
 
 export async function GET() {
   try {
-    const entities = await db.graphEntity.findMany({
-      include: {
-        sourceRelations: { include: { target: true } },
-        targetRelations: { include: { source: true } },
-      },
-    })
-
-    const relations = await db.graphRelation.findMany({
-      include: { source: true, target: true },
-    })
-
-    // Build adjacency info
-    const entityMap = new Map(entities.map(e => [e.id, e]))
+    const [entities, relations] = await Promise.all([
+      db.graphEntity.findMany({
+        include: {
+          sourceRelations: { include: { target: true } },
+          targetRelations: { include: { source: true } },
+        },
+      }),
+      db.graphRelation.findMany({
+        include: { source: true, target: true },
+      }),
+    ])
 
     const nodes = entities.map(e => ({
       id: e.id,
@@ -40,7 +50,7 @@ export async function GET() {
       typeCounts[e.type] = (typeCounts[e.type] || 0) + 1
     }
 
-    return NextResponse.json({
+    return apiResponse({
       nodes,
       edges,
       typeCounts,
@@ -48,7 +58,6 @@ export async function GET() {
       totalRelations: relations.length,
     })
   } catch (error) {
-    console.error('Graph API error:', error)
-    return NextResponse.json({ error: 'Failed to load graph data' }, { status: 500 })
+    return handleApiError(error, 'Graph API')
   }
 }

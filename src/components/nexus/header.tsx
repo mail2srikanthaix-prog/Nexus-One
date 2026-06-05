@@ -1,6 +1,7 @@
 'use client'
 
-import { Bell, Search } from 'lucide-react'
+import { useEffect } from 'react'
+import { Bell, Search, Menu } from 'lucide-react'
 import type { ViewType } from './sidebar'
 
 const viewNames: Record<ViewType, string> = {
@@ -18,13 +19,36 @@ const viewNames: Record<ViewType, string> = {
 
 interface HeaderProps {
   currentView: ViewType
+  onSearch?: () => void
+  onToggleSidebar?: () => void
 }
 
-export function Header({ currentView }: HeaderProps) {
+export function Header({ currentView, onSearch, onToggleSidebar }: HeaderProps) {
+  // Keyboard shortcut: Cmd+K / Ctrl+K to navigate to search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        onSearch?.()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onSearch])
+
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#1e1e2e] bg-[#0a0a0f] px-6">
-      {/* Left: Breadcrumb */}
+      {/* Left: Sidebar Toggle (mobile) + Breadcrumb */}
       <div className="flex items-center gap-2 text-sm">
+        {onToggleSidebar && (
+          <button
+            className="mr-1 flex h-8 w-8 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-[#16161f] hover:text-gray-200 md:hidden"
+            onClick={onToggleSidebar}
+            aria-label="Toggle sidebar menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        )}
         <span className="text-gray-500">NEXUS ONE</span>
         <span className="text-gray-600">/</span>
         <span className="font-medium text-white">{viewNames[currentView]}</span>
@@ -56,20 +80,30 @@ export function Header({ currentView }: HeaderProps) {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-4">
-        <button className="flex items-center gap-1.5 rounded-md border border-[#2a2a3e] bg-[#16161f] px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:text-gray-200">
+        <button
+          className="flex items-center gap-1.5 rounded-md border border-[#2a2a3e] bg-[#16161f] px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:text-gray-200"
+          onClick={() => onSearch?.()}
+          aria-label="Open search (Cmd+K)"
+        >
           <Search className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Search</span>
           <kbd className="hidden rounded border border-[#2a2a3e] bg-[#0a0a0f] px-1 py-0.5 text-[10px] text-gray-500 sm:inline">
             ⌘K
           </kbd>
         </button>
-        <button className="relative rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#16161f] hover:text-gray-200">
+        <button
+          className="relative rounded-lg p-2 text-gray-400 transition-colors hover:bg-[#16161f] hover:text-gray-200"
+          aria-label="Notifications"
+        >
           <Bell className="h-4 w-4" />
           <span className="absolute right-1.5 top-1.5 flex h-2 w-2 rounded-full bg-red-500" />
         </button>
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 text-xs font-bold text-white">
+        <button
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 text-xs font-bold text-white"
+          aria-label="User profile menu"
+        >
           A
-        </div>
+        </button>
       </div>
     </header>
   )
