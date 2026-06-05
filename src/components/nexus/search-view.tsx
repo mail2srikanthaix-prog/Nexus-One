@@ -67,6 +67,7 @@ export function SearchView() {
     const start = Date.now()
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&type=${t}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setResults(data)
       setSearchTime(Date.now() - start)
@@ -80,9 +81,9 @@ export function SearchView() {
   // Only auto-search when activeType changes to a non-'all' value
   useEffect(() => {
     if (activeType !== 'all') {
-      handleSearch(query, activeType)
+      handleSearch(undefined, activeType)
     }
-  }, [activeType]) // handleSearch is stable due to useCallback with [query, activeType]
+  }, [activeType])
 
   const totalResults = results?.totalResults || 0
   const categoryCount = Object.keys(results?.results || {}).length

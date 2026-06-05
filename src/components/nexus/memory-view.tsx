@@ -82,7 +82,10 @@ export function MemoryView() {
     if (debouncedQuery) params.set('q', debouncedQuery)
     const url = `/api/memory${params.toString() ? `?${params.toString()}` : ''}`
     fetch(url)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => { if (!cancelled) setData(d) })
       .catch(() => { if (!cancelled) setError('Failed to load memories. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })

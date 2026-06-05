@@ -2,8 +2,10 @@ import { db } from '@/lib/db'
 import {
   apiResponse,
   apiErrorResponse,
+  getClientIp,
   handleApiError,
   methodNotAllowed,
+  readRateLimiter,
   validateString,
   validateEnum,
   withSecurityHeaders,
@@ -25,6 +27,14 @@ export async function HEAD() {
 
 export async function GET(request: Request) {
   try {
+    const clientIp = getClientIp(request)
+    const rateCheck = readRateLimiter.check(clientIp)
+    if (!rateCheck.allowed) {
+      const response = apiErrorResponse('Rate limit exceeded', 'RATE_LIMITED', 429)
+      response.headers.set('Retry-After', String(rateCheck.retryAfter))
+      return response
+    }
+
     const { searchParams } = new URL(request.url)
 
     // ── Input Validation ───────────────────────────────────────────────

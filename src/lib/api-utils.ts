@@ -248,3 +248,8 @@ export function getClientIp(request: Request): string {
   }
   return 'unknown'
 }
+
+/**
+ * Default rate limiter for read endpoints: 60 requests per minute per IP
+ */
+export const readRateLimiter = new RateLimiter(60, 60_000)

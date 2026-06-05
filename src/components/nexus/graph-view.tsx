@@ -63,7 +63,10 @@ export function GraphView() {
   useEffect(() => {
     let cancelled = false
     fetch('/api/graph')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => {
         if (cancelled) return
         setData(d)

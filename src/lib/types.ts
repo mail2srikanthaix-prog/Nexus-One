@@ -7,19 +7,29 @@
 
 export interface DashboardMetrics {
   totalPeople: number
+  activePeople: number
+  totalTeams: number
+  totalProjects: number
   activeProjects: number
+  totalTasks: number
   activeTasks: number
   completedTasks: number
   criticalEvents: number
-  budgetUtilization: number
-  avgProjectHealth: number
   totalEvents: number
+  activePredictions: number
+  criticalPredictions: number
+  connectedConnectors: number
+  totalConnectors: number
+  totalRecords: number
+  totalBudget: number
+  totalBudgetUsed: number
+  budgetUtilization: string
+  avgProjectHealth: string
   agentStatus: {
     idle: number
     thinking: number
     executing: number
     reporting: number
-    error: number
   }
 }
 
@@ -29,6 +39,7 @@ export interface DashboardAgent {
   type: string
   status: string
   lastAction?: string
+  actions: Array<{ id: string; type: string; title: string; status: string; confidence?: number; createdAt: string }>
 }
 
 export interface DashboardPrediction {
@@ -60,10 +71,12 @@ export interface DashboardConnector {
 }
 
 export interface DashboardData {
+  organization: { id: string; name: string; industry?: string; size?: string; revenue?: number } | null
   metrics: DashboardMetrics
   agents: DashboardAgent[]
   predictions: DashboardPrediction[]
   recentEvents: DashboardEvent[]
+  topMemories: Array<{ id: string; title: string; type: string; content: string; importance: number }>
   projects: DashboardProject[]
   connectors: DashboardConnector[]
 }
@@ -303,6 +316,8 @@ export interface SecurityResponse {
   totalAuditLogs: number
   auditLogs: AuditLog[]
   securityConnectors: SecurityConnector[]
+  errorConnectors: SecurityConnector[]
   highRiskPeople: RiskPerson[]
   securityPredictions: SecurityPrediction[]
+  severityCounts: Record<string, number>
 }

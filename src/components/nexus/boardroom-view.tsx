@@ -68,6 +68,7 @@ export function BoardroomView() {
             history: [],
           }),
         })
+        if (!res.ok) throw new Error('Chat request failed')
         const data = await res.json()
 
         setResponses((prev) =>
@@ -98,6 +99,7 @@ export function BoardroomView() {
           history: [],
         }),
       })
+      if (!res.ok) throw new Error('Chat request failed')
       const data = await res.json()
       setConsensus(data.response || 'Consensus could not be reached.')
     } catch {

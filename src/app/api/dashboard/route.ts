@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { apiResponse, handleApiError, methodNotAllowed, withSecurityHeaders } from '@/lib/api-utils'
+import { apiResponse, apiErrorResponse, getClientIp, handleApiError, methodNotAllowed, readRateLimiter, withSecurityHeaders } from '@/lib/api-utils'
 import { NextResponse } from 'next/server'
 
 // Method guard: only GET and HEAD allowed
@@ -13,8 +13,15 @@ export async function HEAD() {
   return withSecurityHeaders(response)
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const clientIp = getClientIp(request)
+    const rateCheck = readRateLimiter.check(clientIp)
+    if (!rateCheck.allowed) {
+      const response = apiErrorResponse('Rate limit exceeded', 'RATE_LIMITED', 429)
+      response.headers.set('Retry-After', String(rateCheck.retryAfter))
+      return response
+    }
     // ── Count-based metrics (no full row fetch) ──────────────────────────
     const [
       totalPeople,

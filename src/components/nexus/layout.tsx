@@ -14,6 +14,7 @@ import { MemoryView } from './memory-view'
 import { SecurityView } from './security-view'
 import { BoardroomView } from './boardroom-view'
 import { TimemachineView } from './timemachine-view'
+import { ErrorBoundary } from './error-boundary'
 
 const viewComponents: Record<ViewType, React.ComponentType> = {
   dashboard: DashboardView,
@@ -48,6 +49,7 @@ export function NexusLayout() {
   }
 
   return (
+    <ErrorBoundary>
     <div className="flex h-screen w-full overflow-hidden bg-[#0a0a0f]">
       <Sidebar
         currentView={currentView}
@@ -71,7 +73,9 @@ export function NexusLayout() {
               transition={{ duration: 0.2, ease: 'easeOut' }}
               className="h-full"
             >
-              <ViewComponent />
+              <ErrorBoundary>
+                <ViewComponent />
+              </ErrorBoundary>
             </motion.div>
           </AnimatePresence>
         </main>
@@ -91,5 +95,6 @@ export function NexusLayout() {
         </footer>
       </div>
     </div>
+    </ErrorBoundary>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Activity, Info, AlertTriangle, AlertOctagon, Circle } from 'lucide-react'
 import {
@@ -54,6 +54,7 @@ export function EventsView() {
   const [severityFilter, setSeverityFilter] = useState('all')
   const [autoScroll, setAutoScroll] = useState(true)
   const [fetchKey, setFetchKey] = useState(0)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const handleRetry = () => {
     setLoading(true)
@@ -73,12 +74,22 @@ export function EventsView() {
       ? '/api/events?limit=50'
       : `/api/events?limit=50&severity=${severityFilter}`
     fetch(url)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => { if (!cancelled) setData(d) })
       .catch(() => { if (!cancelled) setError('Failed to load events. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [severityFilter, fetchKey])
+
+  // Auto-scroll to top when data changes and autoScroll is enabled
+  useEffect(() => {
+    if (autoScroll && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0
+    }
+  }, [data, autoScroll])
 
   if (error) {
     return (
@@ -168,7 +179,7 @@ export function EventsView() {
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Event Timeline */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6">
           <div className="relative">
             {/* Timeline line */}
             <div className="absolute left-[76px] top-0 bottom-0 w-px bg-[#1e1e2e]" />

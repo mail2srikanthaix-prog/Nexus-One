@@ -278,3 +278,98 @@ Stage Summary:
 - Canvas is accessible and retina-ready
 - Mobile sidebar with hamburger toggle works
 - Events source distribution computed once (no double-reduce)
+
+---
+Task ID: 2
+Agent: API Safety & Database Performance Engineer
+Task: Fix API safety issues and database performance
+
+Work Log:
+
+1. **Fixed JSON.parse safety in /api/graph/route.ts**:
+   - Wrapped `JSON.parse(e.properties)` in try/catch IIFE to prevent crashes from invalid JSON
+   - Returns `{}` on parse failure instead of throwing unhandled exception
+
+2. **Fixed Prisma logging in /src/lib/db.ts**:
+   - Changed `log: ['query']` to conditional logging
+   - Production: `['warn', 'error']` (no query logging for performance)
+   - Development: `['query', 'warn', 'error']` (full query logging for debugging)
+
+3. **Added database indexes to prisma/schema.prisma**:
+   - Person: `@@index([status])`, `@@index([teamId])`, `@@index([orgId])`
+   - Project: `@@index([status])`, `@@index([teamId])`, `@@index([orgId])`
+   - Task: `@@index([status])`, `@@index([assigneeId])`, `@@index([projectId])`
+   - Event: `@@index([severity])`, `@@index([type])`, `@@index([createdAt])`, `@@index([personId])`, `@@index([projectId])`
+   - Prediction: `@@index([status])`, `@@index([type])`
+   - Memory: `@@index([type])`, `@@index([importance])`
+   - Agent: `@@index([status])`
+   - AgentAction: `@@index([agentId])`
+   - GraphEntity: `@@index([type])`
+   - GraphRelation: `@@index([sourceId])`, `@@index([targetId])`
+   - AuditLog: `@@index([severity])`, `@@index([createdAt])`
+   - ChatMessage: `@@index([agentType])`, `@@index([createdAt])`
+   - Connector: `@@index([status])`, `@@index([orgId])`
+   - Decision: `@@index([status])`, `@@index([projectId])`
+   - Document: `@@index([authorId])`
+   - Ran `bun run db:push` — schema synced successfully
+
+4. **Added shared read rate limiter to /src/lib/api-utils.ts**:
+   - Added `readRateLimiter = new RateLimiter(60, 60_000)` (60 requests/minute per IP)
+   - Exported alongside existing `getClientIp` utility
+
+5. **Added rate limiting to all 8 read API endpoints**:
+   - /api/dashboard — added `request: Request` parameter + rate check
+   - /api/agents — added `request: Request` parameter + rate check
+   - /api/graph — added `request: Request` parameter + rate check
+   - /api/events — already had `request: Request`, added rate check
+   - /api/predictions — added `request: Request` parameter + rate check
+   - /api/memory — already had `request: Request`, added rate check
+   - /api/security — added `request: Request` parameter + rate check
+   - /api/search — already had `request: Request`, added rate check
+   - All endpoints return 429 with Retry-After header when rate limited
+
+Stage Summary:
+- JSON.parse in graph API is now crash-safe with try/catch
+- Prisma no longer logs all queries in production (performance improvement)
+- 37 database indexes added across 15 models for faster queries
+- All 8 read API endpoints have rate limiting (60 req/min/IP)
+- Lint passes clean, no errors
+
+---
+Task ID: 1
+Agent: Type Fix & Error Boundary Engineer
+Task: Fix type mismatches and add Error Boundary
+
+1. **Fixed /src/lib/types.ts - DashboardMetrics**:
+   - Added missing fields: activePeople, totalTeams, totalProjects, totalTasks, activePredictions, criticalPredictions, connectedConnectors, totalConnectors, totalRecords, totalBudget, totalBudgetUsed
+   - Changed `budgetUtilization` from `number` to `string` (API returns `.toFixed(1)`)
+   - Changed `avgProjectHealth` from `number` to `string` (API returns `.toFixed(0)`)
+   - Removed `error` field from agentStatus (API only returns idle/thinking/executing/reporting)
+
+2. **Fixed /src/lib/types.ts - DashboardAgent**:
+   - Added `actions` array field matching API's included agent actions: `Array<{ id, type, title, status, confidence?, createdAt }>`
+
+3. **Fixed /src/lib/types.ts - DashboardData**:
+   - Added `organization` field: `{ id, name, industry?, size?, revenue? } | null`
+   - Added `topMemories` field: `Array<{ id, title, type, content, importance }>`
+
+4. **Fixed /src/lib/types.ts - SecurityResponse**:
+   - Added `errorConnectors: SecurityConnector[]` field
+   - Added `severityCounts: Record<string, number>` field
+
+5. **Created /src/components/nexus/error-boundary.tsx**:
+   - React class component ErrorBoundary with getDerivedStateFromError + componentDidCatch
+   - Production-grade error UI: dark theme (bg-[#0a0a0f]), emerald accents, AlertTriangle icon
+   - "Reload" button resets error boundary state
+   - "Report Issue" button (styled, non-functional)
+   - Error message displayed in a styled pre block
+   - Errors logged to console.error with [NEXUS ONE ErrorBoundary] prefix
+
+6. **Updated /src/components/nexus/layout.tsx**:
+   - Wrapped `<ViewComponent />` in `<ErrorBoundary>` so individual view crashes don't take down the app
+   - Wrapped entire NexusLayout return in `<ErrorBoundary>` as top-level safety net
+
+Stage Summary:
+- All type mismatches between frontend types and actual API responses resolved
+- Error Boundary catches render crashes at both view-level and layout-level
+- Lint passes clean, dev server running successfully

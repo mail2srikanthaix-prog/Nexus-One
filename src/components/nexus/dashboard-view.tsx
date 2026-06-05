@@ -127,7 +127,10 @@ export function DashboardView() {
   useEffect(() => {
     let cancelled = false
     fetch('/api/dashboard')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => { if (!cancelled) setData(d) })
       .catch(() => { if (!cancelled) setError('Failed to load dashboard data. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })

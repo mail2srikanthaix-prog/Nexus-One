@@ -64,7 +64,10 @@ export function AgentsView() {
   useEffect(() => {
     let cancelled = false
     fetch('/api/agents')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => { if (!cancelled) setData(d) })
       .catch(() => { if (!cancelled) setError('Failed to load agents. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })
@@ -93,6 +96,7 @@ export function AgentsView() {
           history: chatMessages,
         }),
       })
+      if (!res.ok) throw new Error('Chat request failed')
       const data = await res.json()
       const assistantMsg: ChatMessage = { role: 'assistant', content: data.response || 'No response' }
       setChatMessages((prev) => [...prev, assistantMsg])
@@ -269,7 +273,7 @@ export function AgentsView() {
                   <Input
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendChat()}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && !chatLoading && handleSendChat()}
                     placeholder={`Ask ${selectedAgent.name} anything...`}
                     className="border-[#2a2a3e] bg-[#111118] text-gray-200 placeholder:text-gray-600"
                     disabled={chatLoading}

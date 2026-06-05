@@ -63,7 +63,10 @@ export function TimemachineView() {
   useEffect(() => {
     let cancelled = false
     fetch('/api/events?limit=100')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((events) => { if (!cancelled) setEventsData(events) })
       .catch(() => { if (!cancelled) setError('Failed to load time machine data. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })

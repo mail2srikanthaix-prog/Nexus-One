@@ -38,7 +38,10 @@ export function SecurityView() {
   useEffect(() => {
     let cancelled = false
     fetch('/api/security')
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => { if (!cancelled) setData(d) })
       .catch(() => { if (!cancelled) setError('Failed to load security dashboard. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })
