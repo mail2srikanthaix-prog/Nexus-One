@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id         String   @id @default(cuid())
+  name       String
+  industry   String?
+  size       String?
+  revenue    Float?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  people     Person[]
+  teams      Team[]
+  projects   Project[]
+  connectors Connector[]
+}
+
+model Person {
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  role           String?
+  department     String?
+  avatar         String?
+  status         String   @default("active")
+  riskScore      Float    @default(0)
+  influenceScore Float    @default(50)
+  orgId          String?
+  organization   Organization? @relation(fields: [orgId], references: [id])
+  teamId         String?
+  team           Team?    @relation(fields: [teamId], references: [id])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  authoredDocs   Document[]
+  decisions      Decision[]
+  assignedTasks  Task[]
+  events         Event[]
+}
+
+model Team {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  color        String   @default("#10b981")
+  orgId        String?
+  organization Organization? @relation(fields: [orgId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  projects     Project[]
+  members      Person[]
+}
+
+model Project {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  status       String   @default("active")
+  health       Float    @default(85)
+  progress     Float    @default(0)
+  riskScore    Float    @default(15)
+  budget       Float?
+  budgetUsed   Float    @default(0)
+  startDate    DateTime?
+  endDate      DateTime?
+  orgId        String?
+  organization Organization? @relation(fields: [orgId], references: [id])
+  teamId       String?
+  team         Team?    @relation(fields: [teamId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tasks        Task[]
+  decisions    Decision[]
+  events       Event[]
+}
+
+model Decision {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  status      String   @default("proposed")
+  impact      String   @default("medium")
+  confidence  Float    @default(0.5)
+  reasoning   String?
+  madeById    String?
+  madeBy      Person?  @relation(fields: [madeById], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events      Event[]
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  status      String   @default("todo")
+  priority    String   @default("medium")
+  assigneeId  String?
+  assignee    Person?  @relation(fields: [assigneeId], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  title       String
+  content     String?
+  type        String   @default("general")
+  authorId    String?
+  author      Person?  @relation(fields: [authorId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  description String?
+  severity    String   @default("info")
+  source      String?
+  metadata    String?
+  personId    String?
+  person      Person?  @relation(fields: [personId], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  decisionId  String?
+  decision    Decision? @relation(fields: [decisionId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model GraphEntity {
+  id         String   @id @default(cuid())
+  type       String
+  name       String
+  properties String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sourceRelations GraphRelation[] @relation("SourceEntity")
+  targetRelations GraphRelation[] @relation("TargetEntity")
+}
+
+model GraphRelation {
+  id         String   @id @default(cuid())
+  type       String
+  sourceId   String
+  source     GraphEntity @relation("SourceEntity", fields: [sourceId], references: [id])
+  targetId   String
+  target     GraphEntity @relation("TargetEntity", fields: [targetId], references: [id])
+  properties String?
+  weight     Float    @default(1)
+  createdAt  DateTime @default(now())
+}
+
+model Agent {
+  id           String   @id @default(cuid())
+  name         String
+  type         String
+  description  String?
+  status       String   @default("idle")
+  avatar       String?
+  capabilities String?
+  lastAction   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  actions     AgentAction[]
+}
+
+model AgentAction {
+  id          String   @id @default(cuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  type        String
+  title       String
+  description String?
+  result      String?
+  status      String   @default("pending")
+  confidence  Float?
+  evidence    String?
+  createdAt   DateTime @default(now())
+}
+
+model Memory {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  content     String
+  source      String?
+  importance  Float    @default(0.5)
+  tags        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Prediction {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  description String?
+  probability Float
+  impact      String   @default("medium")
+  timeframe   String?
+  status      String   @default("active")
+  evidence    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Connector {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  category    String
+  status      String   @default("connected")
+  lastSync    DateTime?
+  recordCount Int?
+  orgId       String?
+  organization Organization? @relation(fields: [orgId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  actor       String?
+  resource    String?
+  details     String?
+  severity    String   @default("info")
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String
+  content   String
+  agentType String?
+  createdAt DateTime @default(now())
+}
