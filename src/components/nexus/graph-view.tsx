@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { ZoomIn, ZoomOut, Maximize, Filter, AlertTriangle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import type { GraphData, GraphNode, GraphEdge } from '@/lib/types'
 
@@ -28,6 +27,14 @@ const typeLabels: Record<string, string> = {
   vendor: 'Vendors',
   decision: 'Decisions',
   data_asset: 'Data Assets',
+}
+
+// Convert hex color + opacity to rgba string (universally supported in canvas)
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 export function GraphView() {
@@ -60,6 +67,7 @@ export function GraphView() {
     setFetchKey((k) => k + 1)
   }
 
+  // Fetch graph data
   useEffect(() => {
     let cancelled = false
     fetch('/api/graph')
@@ -70,15 +78,14 @@ export function GraphView() {
       .then((d) => {
         if (cancelled) return
         setData(d)
-        const cx = 600
-        const cy = 400
+        // Initialize node positions in a circle centered on canvas center
         nodesRef.current = d.nodes.map((n: { id: string; type: string; name: string; relationCount: number }, i: number) => {
           const angle = (i / d.nodes.length) * Math.PI * 2
           const radius = 200 + Math.random() * 150
           return {
             ...n,
-            x: cx + Math.cos(angle) * radius,
-            y: cy + Math.sin(angle) * radius,
+            x: 520 + Math.cos(angle) * radius,
+            y: 260 + Math.sin(angle) * radius,
             vx: 0,
             vy: 0,
           }
@@ -90,39 +97,37 @@ export function GraphView() {
     return () => { cancelled = true }
   }, [fetchKey])
 
-  useEffect(() => {
-    activeFilterRef.current = activeFilter
-  }, [activeFilter])
+  // Sync refs with state
+  useEffect(() => { activeFilterRef.current = activeFilter }, [activeFilter])
+  useEffect(() => { hoveredNodeRef.current = hoveredNode }, [hoveredNode])
+  useEffect(() => { selectedNodeRef.current = selectedNode }, [selectedNode])
 
-  useEffect(() => {
-    hoveredNodeRef.current = hoveredNode
-  }, [hoveredNode])
-
-  useEffect(() => {
-    selectedNodeRef.current = selectedNode
-  }, [selectedNode])
-
-  // Main animation loop - all simulation and drawing inlined
+  // Main animation loop
   useEffect(() => {
     if (loading || !data) return
 
     const canvas = canvasRef.current
     if (!canvas) return
 
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let running = true
+
     const resizeCanvas = () => {
       const parent = canvas.parentElement
-      if (parent) {
-        const dpr = window.devicePixelRatio || 1
-        const width = parent.clientWidth
-        const height = parent.clientHeight
-        canvas.width = width * dpr
-        canvas.height = height * dpr
-        canvas.style.width = `${width}px`
-        canvas.style.height = `${height}px`
-        const ctx = canvas.getContext('2d')
-        if (ctx) ctx.scale(dpr, dpr)
-      }
+      if (!parent) return
+      const dpr = window.devicePixelRatio || 1
+      const width = parent.clientWidth
+      const height = parent.clientHeight
+      if (width === 0 || height === 0) return
+      canvas.width = width * dpr
+      canvas.height = height * dpr
+      canvas.style.width = `${width}px`
+      canvas.style.height = `${height}px`
+      ctx.scale(dpr, dpr)
     }
+
     resizeCanvas()
     window.addEventListener('resize', resizeCanvas)
 
@@ -136,7 +141,22 @@ export function GraphView() {
       const repulsion = 3000
       const attraction = 0.005
       const damping = 0.85
+      const canvasW = canvas.clientWidth
+      const canvasH = canvas.clientHeight
+      const cx = canvasW / 2
+      const cy = canvasH / 2
 
+      // Fix any NaN positions first
+      for (const node of nodes) {
+        if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+          node.x = cx + (Math.random() - 0.5) * 200
+          node.y = cy + (Math.random() - 0.5) * 200
+        }
+        if (!Number.isFinite(node.vx)) node.vx = 0
+        if (!Number.isFinite(node.vy)) node.vy = 0
+      }
+
+      // Node-to-node repulsion
       for (let i = 0; i < nodes.length; i++) {
         const a = nodes[i]
         if (filter !== 'all' && a.type !== filter) continue
@@ -159,6 +179,7 @@ export function GraphView() {
         }
       }
 
+      // Edge attraction
       for (const edge of edges) {
         const source = nodes.find((n) => n.id === edge.source)
         const target = nodes.find((n) => n.id === edge.target)
@@ -177,10 +198,10 @@ export function GraphView() {
         target.vy -= dy * force
       }
 
-      const cx = 600
-      const cy = 400
+      // Center gravity + velocity damping
       for (const node of nodes) {
         if (filter !== 'all' && node.type !== filter) continue
+
         node.vx += (cx - node.x) * 0.001
         node.vy += (cy - node.y) * 0.001
 
@@ -194,12 +215,12 @@ export function GraphView() {
     }
 
     const draw = () => {
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-
-      // Use CSS dimensions for coordinate system (DPR scaling already applied in resizeCanvas)
+      const dpr = window.devicePixelRatio || 1
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       const width = canvas.clientWidth
       const height = canvas.clientHeight
+      ctx.clearRect(0, 0, width, height)
+
       const transform = transformRef.current
       const nodes = nodesRef.current
       const edges = edgesRef.current
@@ -207,19 +228,22 @@ export function GraphView() {
       const hov = hoveredNodeRef.current
       const sel = selectedNodeRef.current
 
-      // Reset transform before clearing — needed because DPR scaling was applied
-      const dpr = window.devicePixelRatio || 1
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-      ctx.clearRect(0, 0, width, height)
+      if (nodes.length === 0) return
+
       ctx.save()
       ctx.translate(transform.x, transform.y)
       ctx.scale(transform.scale, transform.scale)
 
+      // Build a lookup map for faster edge drawing
+      const nodeMap = new Map<string, GraphNode>()
+      for (const n of nodes) nodeMap.set(n.id, n)
+
       // Draw edges
       for (const edge of edges) {
-        const source = nodes.find((n) => n.id === edge.source)
-        const target = nodes.find((n) => n.id === edge.target)
+        const source = nodeMap.get(edge.source)
+        const target = nodeMap.get(edge.target)
         if (!source || !target) continue
+        if (!Number.isFinite(source.x) || !Number.isFinite(target.x)) continue
         if (filter !== 'all' && (source.type !== filter || target.type !== filter)) continue
 
         const isConnected = sel && (sel.id === source.id || sel.id === target.id)
@@ -230,6 +254,7 @@ export function GraphView() {
         ctx.lineWidth = isConnected ? 2 : 1
         ctx.stroke()
 
+        // Arrow head
         const angle = Math.atan2(target.y - source.y, target.x - source.x)
         const targetRadius = Math.max(6, Math.min(20, (target.relationCount || 1) * 3))
         const arrowX = target.x - Math.cos(angle) * (targetRadius + 4)
@@ -246,6 +271,7 @@ export function GraphView() {
       // Draw nodes
       for (const node of nodes) {
         if (filter !== 'all' && node.type !== filter) continue
+        if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
 
         const color = typeColors[node.type] || '#6b7280'
         const radius = Math.max(6, Math.min(20, (node.relationCount || 1) * 3))
@@ -257,28 +283,32 @@ export function GraphView() {
             (e.target === sel.id && e.source === node.id)
         )
 
+        // Hover/select glow
         if (isHovered || isSelected) {
           ctx.beginPath()
           ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2)
-          ctx.fillStyle = color + '30'
+          ctx.fillStyle = hexToRgba(color, 0.19)
           ctx.fill()
         }
 
+        // Connected highlight
         if (isConnectedToSelected && !isSelected) {
           ctx.beginPath()
           ctx.arc(node.x, node.y, radius + 4, 0, Math.PI * 2)
-          ctx.fillStyle = color + '15'
+          ctx.fillStyle = hexToRgba(color, 0.08)
           ctx.fill()
         }
 
+        // Node circle
         ctx.beginPath()
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2)
-        ctx.fillStyle = isSelected ? color : color + '80'
+        ctx.fillStyle = isSelected ? color : hexToRgba(color, 0.5)
         ctx.fill()
         ctx.strokeStyle = color
         ctx.lineWidth = isSelected ? 2.5 : 1
         ctx.stroke()
 
+        // Label
         if (isHovered || isSelected || transform.scale > 1.2) {
           ctx.font = '11px sans-serif'
           ctx.fillStyle = '#e5e7eb'
@@ -291,6 +321,7 @@ export function GraphView() {
     }
 
     const animate = () => {
+      if (!running) return
       simulate()
       draw()
       animFrameRef.current = requestAnimationFrame(animate)
@@ -298,6 +329,7 @@ export function GraphView() {
     animFrameRef.current = requestAnimationFrame(animate)
 
     return () => {
+      running = false
       window.removeEventListener('resize', resizeCanvas)
       cancelAnimationFrame(animFrameRef.current)
     }
@@ -314,6 +346,7 @@ export function GraphView() {
 
     for (const node of nodesRef.current) {
       if (filter !== 'all' && node.type !== filter) continue
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
       const radius = Math.max(6, Math.min(20, (node.relationCount || 1) * 3))
       const dx = x - node.x
       const dy = y - node.y
@@ -423,7 +456,7 @@ export function GraphView() {
               size="sm"
               variant={activeFilter === key ? 'default' : 'ghost'}
               className={`h-7 text-xs ${activeFilter === key ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`}
-              style={activeFilter === key ? { backgroundColor: typeColors[key] + '30', color: typeColors[key] } : {}}
+              style={activeFilter === key ? { backgroundColor: hexToRgba(typeColors[key], 0.19), color: typeColors[key] } : {}}
               onClick={() => setActiveFilter(key)}
             >
               {label}
@@ -459,11 +492,11 @@ export function GraphView() {
         ))}
       </div>
 
-      {/* Canvas */}
-      <div className="relative flex-1">
+      {/* Canvas container */}
+      <div className="relative flex-1 min-h-0">
         <canvas
           ref={canvasRef}
-          className="h-full w-full cursor-grab active:cursor-grabbing"
+          className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
