@@ -63,7 +63,7 @@ export function NexusLayout() {
           onSearch={handleSearch}
           onToggleSidebar={handleToggleSidebar}
         />
-        <main className="flex flex-1 flex-col overflow-hidden min-h-0">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentView}
@@ -71,7 +71,7 @@ export function NexusLayout() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="h-full"
+              className="flex min-h-0 flex-1 flex-col"
             >
               <ErrorBoundary>
                 <ViewComponent />
