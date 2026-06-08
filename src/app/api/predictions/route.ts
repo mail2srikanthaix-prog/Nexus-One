@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { apiResponse, apiErrorResponse, getClientIp, handleApiError, methodNotAllowed, readRateLimiter, withSecurityHeaders } from '@/lib/api-utils'
+import { getTenantId, addTenantFilter } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 // Method guard: only GET and HEAD allowed
@@ -22,7 +23,13 @@ export async function GET(request: Request) {
       response.headers.set('Retry-After', String(rateCheck.retryAfter))
       return response
     }
+
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const where = tenantId ? addTenantFilter({}, tenantId) : {}
+
     const predictions = await db.prediction.findMany({
+      where,
       orderBy: { probability: 'desc' },
     })
 

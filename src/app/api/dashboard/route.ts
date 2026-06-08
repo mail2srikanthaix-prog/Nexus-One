@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { apiResponse, apiErrorResponse, getClientIp, handleApiError, methodNotAllowed, readRateLimiter, withSecurityHeaders } from '@/lib/api-utils'
+import { getTenantId, addTenantFilter, addOrgIdFilter, addEventTenantFilter, getTenantOrgIds } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 // Method guard: only GET and HEAD allowed
@@ -22,6 +23,13 @@ export async function GET(request: Request) {
       response.headers.set('Retry-After', String(rateCheck.retryAfter))
       return response
     }
+
+    // ── Tenant context ──────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const tenantFilter = tenantId ? addTenantFilter({}, tenantId) : {}
+    const orgFilter = tenantId ? await addOrgIdFilter({}, tenantId) : {}
+    const eventFilter = tenantId ? await addEventTenantFilter({}, tenantId) : {}
+
     // ── Count-based metrics (no full row fetch) ──────────────────────────
     const [
       totalPeople,
@@ -43,33 +51,41 @@ export async function GET(request: Request) {
       agentStatusExecuting,
       agentStatusReporting,
     ] = await Promise.all([
-      db.person.count(),
-      db.person.count({ where: { status: 'active' } }),
-      db.team.count(),
-      db.project.count(),
-      db.project.count({ where: { status: 'active' } }),
-      db.task.count(),
-      db.task.count({ where: { status: { not: 'done' } } }),
-      db.task.count({ where: { status: 'done' } }),
-      db.event.count({ where: { severity: { in: ['critical', 'error'] } } }),
-      db.event.count(),
-      db.prediction.count({ where: { status: 'active' } }),
-      db.prediction.count({ where: { status: 'active', probability: { gt: 0.6 } } }),
-      db.connector.count({ where: { status: 'connected' } }),
-      db.connector.count(),
-      db.agent.count({ where: { status: 'idle' } }),
-      db.agent.count({ where: { status: 'thinking' } }),
-      db.agent.count({ where: { status: 'executing' } }),
-      db.agent.count({ where: { status: 'reporting' } }),
+      db.person.count({ where: orgFilter }),
+      db.person.count({ where: { ...orgFilter, status: 'active' } }),
+      db.team.count({ where: orgFilter }),
+      db.project.count({ where: orgFilter }),
+      db.project.count({ where: { ...orgFilter, status: 'active' } }),
+      db.task.count({
+        where: tenantId ? { project: orgFilter } : {},
+      }),
+      db.task.count({
+        where: tenantId ? { project: orgFilter, status: { not: 'done' } } : { status: { not: 'done' } },
+      }),
+      db.task.count({
+        where: tenantId ? { project: orgFilter, status: 'done' } : { status: 'done' },
+      }),
+      db.event.count({ where: { ...eventFilter, severity: { in: ['critical', 'error'] } } }),
+      db.event.count({ where: eventFilter }),
+      db.prediction.count({ where: { ...tenantFilter, status: 'active' } }),
+      db.prediction.count({ where: { ...tenantFilter, status: 'active', probability: { gt: 0.6 } } }),
+      db.connector.count({ where: { ...orgFilter, status: 'connected' } }),
+      db.connector.count({ where: orgFilter }),
+      db.agent.count({ where: { ...tenantFilter, status: 'idle' } }),
+      db.agent.count({ where: { ...tenantFilter, status: 'thinking' } }),
+      db.agent.count({ where: { ...tenantFilter, status: 'executing' } }),
+      db.agent.count({ where: { ...tenantFilter, status: 'reporting' } }),
     ])
 
     // ── Aggregated data for budget / records / health ────────────────────
     const [projectBudgets, connectorRecords, org, activeProjectsWithHealth] = await Promise.all([
-      db.project.findMany({ select: { budget: true, budgetUsed: true, status: true } }),
-      db.connector.findMany({ select: { recordCount: true } }),
-      db.organization.findFirst(),
+      db.project.findMany({ where: orgFilter, select: { budget: true, budgetUsed: true, status: true } }),
+      db.connector.findMany({ where: orgFilter, select: { recordCount: true } }),
+      tenantId
+        ? db.organization.findFirst({ where: { tenantId } })
+        : db.organization.findFirst(),
       db.project.findMany({
-        where: { status: 'active' },
+        where: { ...orgFilter, status: 'active' },
         select: { health: true },
       }),
     ])
@@ -83,12 +99,12 @@ export async function GET(request: Request) {
 
     // ── Data for display lists ───────────────────────────────────────────
     const [recentEvents, agents, predictions, topMemories, activeProjects, connectors] = await Promise.all([
-      db.event.findMany({ orderBy: { createdAt: 'desc' }, take: 20 }),
-      db.agent.findMany({ include: { actions: { orderBy: { createdAt: 'desc' }, take: 3 } } }),
-      db.prediction.findMany({ where: { status: 'active' }, take: 6 }),
-      db.memory.findMany({ orderBy: { importance: 'desc' }, take: 5 }),
-      db.project.findMany({ where: { status: 'active' }, take: 6 }),
-      db.connector.findMany(),
+      db.event.findMany({ where: eventFilter, orderBy: { createdAt: 'desc' }, take: 20 }),
+      db.agent.findMany({ where: tenantFilter, include: { actions: { orderBy: { createdAt: 'desc' }, take: 3 } } }),
+      db.prediction.findMany({ where: { ...tenantFilter, status: 'active' }, take: 6 }),
+      db.memory.findMany({ where: tenantFilter, orderBy: { importance: 'desc' }, take: 5 }),
+      db.project.findMany({ where: { ...orgFilter, status: 'active' }, take: 6 }),
+      db.connector.findMany({ where: orgFilter }),
     ])
 
     return apiResponse({

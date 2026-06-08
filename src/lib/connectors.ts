@@ -155,31 +155,31 @@ export class WebSearchConnector extends BaseConnector {
 
     try {
       // For web search, "sync" means refreshing trending topics
-      // We store recent search trends as events
+      // Use real web search to fetch current trending topics
       const zai = await getZAI()
-      const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.1:8b'
-
-      const completion = await zai.chat.completions.create({
-        model: ollamaModel,
-        messages: [
-          {
-            role: 'assistant',
-            content: 'You are a web trend analyzer. Return a JSON array of 5 current trending topics in technology and business. Each item should have "title" and "description" fields.',
-          },
-          { role: 'user', content: 'What are the current trending topics?' },
-        ],
-        thinking: { type: 'disabled' },
+      const results = await zai.functions.invoke('web_search', {
+        query: 'technology and business trending topics',
+        num: 10,
       })
 
-      const responseText = completion.choices[0]?.message?.content || '[]'
+      // Map real search results to a structured format
+      const trendingTopics = (Array.isArray(results) ? results : []).map(
+        (item: { name?: string; url?: string; snippet?: string; host_name?: string; date?: string }) => ({
+          title: item.name || '',
+          url: item.url || '',
+          snippet: item.snippet || '',
+          source: item.host_name || '',
+          date: item.date || '',
+        })
+      )
 
-      // Store as domain event
+      // Store as domain event with real search data
       await db.domainEvent.create({
         data: {
           eventType: 'connector.sync.web_search',
           aggregateId: 'web_search',
           aggregateType: 'Connector',
-          payload: JSON.stringify({ source: 'web_search', data: responseText }),
+          payload: JSON.stringify({ source: 'web_search', data: trendingTopics }),
           metadata: JSON.stringify({ tenantId, since: since?.toISOString() }),
           actorType: 'system',
         },
@@ -193,8 +193,8 @@ export class WebSearchConnector extends BaseConnector {
 
       return {
         success: true,
-        recordsProcessed: 1,
-        recordsCreated: 1,
+        recordsProcessed: trendingTopics.length,
+        recordsCreated: trendingTopics.length,
         recordsUpdated: 0,
         recordsFailed: 0,
         errors: [],
@@ -239,10 +239,10 @@ export class WebSearchConnector extends BaseConnector {
       try {
         const start = Date.now()
         const zai = await getZAI()
-        await zai.chat.completions.create({
-          model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
-          messages: [{ role: 'user', content: 'ping' }],
-          thinking: { type: 'disabled' },
+        // Use a lightweight web search as a health check ping
+        await zai.functions.invoke('web_search', {
+          query: 'health check ping',
+          num: 1,
         })
         this.lastHealthCheck = {
           status: 'healthy',
@@ -274,30 +274,20 @@ export class WebSearchConnector extends BaseConnector {
   }>> {
     try {
       const zai = await getZAI()
-      const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.1:8b'
-
-      const completion = await zai.chat.completions.create({
-        model: ollamaModel,
-        messages: [
-          {
-            role: 'assistant',
-            content: `You are a web search assistant. Given a query, return a JSON array of search results. Each result should have "title", "url", and "snippet" fields. Return at most ${maxResults} results. Only return the JSON array, no other text.`,
-          },
-          { role: 'user', content: query },
-        ],
-        thinking: { type: 'disabled' },
+      const results = await zai.functions.invoke('web_search', {
+        query,
+        num: maxResults,
       })
 
-      const responseText = completion.choices[0]?.message?.content || '[]'
-
-      try {
-        // Try to extract JSON array from response
-        const jsonMatch = responseText.match(/\[[\s\S]*\]/)
-        if (jsonMatch) {
-          return JSON.parse(jsonMatch[0])
-        }
-      } catch {
-        // If parsing fails, return empty results
+      // Map real search results to the expected return format
+      if (Array.isArray(results)) {
+        return results.map(
+          (item: { name?: string; url?: string; snippet?: string }) => ({
+            title: item.name || '',
+            url: item.url || '',
+            snippet: item.snippet || '',
+          })
+        )
       }
 
       return []

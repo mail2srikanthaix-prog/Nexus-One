@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { apiResponse, apiErrorResponse, getClientIp, handleApiError, methodNotAllowed, readRateLimiter, withSecurityHeaders } from '@/lib/api-utils'
+import { getTenantId, addTenantFilter } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 // Method guard: only GET and HEAD allowed
@@ -22,14 +23,29 @@ export async function GET(request: Request) {
       response.headers.set('Retry-After', String(rateCheck.retryAfter))
       return response
     }
+
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const entityWhere = tenantId ? addTenantFilter({}, tenantId) : {}
+
+    // When tenant filtering, only get relations where BOTH source and target
+    // belong to the same tenant to prevent cross-tenant data leakage
     const [entities, relations] = await Promise.all([
       db.graphEntity.findMany({
+        where: entityWhere,
         include: {
-          sourceRelations: { include: { target: true } },
-          targetRelations: { include: { source: true } },
+          sourceRelations: tenantId
+            ? { where: { target: { tenantId } }, include: { target: true } }
+            : { include: { target: true } },
+          targetRelations: tenantId
+            ? { where: { source: { tenantId } }, include: { source: true } }
+            : { include: { source: true } },
         },
       }),
       db.graphRelation.findMany({
+        where: tenantId
+          ? { source: { tenantId }, target: { tenantId } }
+          : {},
         include: { source: true, target: true },
       }),
     ])

@@ -11,6 +11,7 @@ import {
   withSecurityHeaders,
 } from '@/lib/api-utils'
 import { paginate, paginationToSkipTake } from '@/lib/performance'
+import { getTenantId, addEventTenantFilter } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 const VALID_SEVERITIES = ['info', 'warning', 'error', 'critical'] as const
@@ -67,7 +68,10 @@ export async function GET(request: Request) {
       pageSize: pageSizeResult.value,
     })
 
-    const where = severity ? { severity } : {}
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const baseWhere = severity ? { severity } : {}
+    const where = await addEventTenantFilter(baseWhere, tenantId)
 
     // ── Determine if pagination is being used ──────────────────────────
     const usePagination = searchParams.has('page') || searchParams.has('pageSize')
@@ -133,8 +137,8 @@ export async function GET(request: Request) {
       ])
 
       const [allTypeCounts, allSeverityCounts] = await Promise.all([
-        db.event.groupBy({ by: ['type'], _count: { type: true } }),
-        db.event.groupBy({ by: ['severity'], _count: { severity: true } }),
+        db.event.groupBy({ by: ['type'], _count: { type: true }, where }),
+        db.event.groupBy({ by: ['severity'], _count: { severity: true }, where }),
       ])
 
       const typeCounts: Record<string, number> = {}

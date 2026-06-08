@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { apiResponse, apiErrorResponse, getClientIp, handleApiError, methodNotAllowed, readRateLimiter, validateInt, withSecurityHeaders } from '@/lib/api-utils'
 import { paginate, paginationToSkipTake } from '@/lib/performance'
+import { getTenantId, addTenantFilter } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 // Method guard: only GET and HEAD allowed
@@ -60,6 +61,10 @@ export async function GET(request: Request) {
       pageSize: pageSizeResult.value,
     })
 
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const where = tenantId ? addTenantFilter({}, tenantId) : {}
+
     // ── Determine if pagination is being used ──────────────────────────
     const usePagination = searchParams.has('page') || searchParams.has('pageSize')
 
@@ -67,6 +72,7 @@ export async function GET(request: Request) {
       // ── Paginated response ─────────────────────────────────────────
       const [agents, totalCount] = await Promise.all([
         db.agent.findMany({
+          where,
           include: {
             actions: {
               orderBy: { createdAt: 'desc' },
@@ -77,7 +83,7 @@ export async function GET(request: Request) {
           skip,
           take,
         }),
-        db.agent.count(),
+        db.agent.count({ where }),
       ])
 
       // Parse capabilities from JSON strings to proper arrays
@@ -109,6 +115,7 @@ export async function GET(request: Request) {
     } else {
       // ── Legacy (non-paginated) response — backward compatible ────────
       const agents = await db.agent.findMany({
+        where,
         include: {
           actions: {
             orderBy: { createdAt: 'desc' },

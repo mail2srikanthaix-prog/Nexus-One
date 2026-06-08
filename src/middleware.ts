@@ -236,6 +236,10 @@ if (process.env.NODE_ENV === 'production') {
 
 const PUBLIC_API_ROUTES = ['/api/auth', '/api/health']
 
+// ─── API Key Constants (Edge-safe) ───────────────────────────────────────────
+
+const API_KEY_PREFIX = 'nx_live_'
+
 function isPublicApiRoute(pathname: string): boolean {
   return PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route))
 }
@@ -301,34 +305,105 @@ export async function middleware(request: NextRequest) {
     return response
   }
 
-  // ── Step 3: Get JWT token for authenticated routes ──────────────────
-  let token
-  try {
-    token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
-  } catch {
-    return createUnauthorizedResponse('Invalid or expired session', requestId, clientIp)
-  }
+  // ── Step 3: Check for API Key authentication ────────────────────────
+  const authHeader = request.headers.get('authorization')
+  let userId: string | undefined
+  let userRole: string | undefined
+  let authMethod: 'session' | 'api_key' = 'session'
 
-  if (!token) {
-    logAuditEvent({
-      action: 'auth.unauthorized',
-      actor: 'anonymous',
-      resource: pathname,
-      resourceType: 'api_route',
-      severity: 'warning',
-      ipAddress: clientIp,
-      userAgent: request.headers.get('user-agent') ?? undefined,
-      requestId,
-      result: 'unauthenticated',
-    })
-    return createUnauthorizedResponse('Authentication required', requestId, clientIp)
-  }
+  if (authHeader?.startsWith('Bearer ') && authHeader.slice(7).startsWith(API_KEY_PREFIX)) {
+    // ── API Key authentication path ───────────────────────────────────
+    authMethod = 'api_key'
 
-  const userId = token.id as string | undefined
-  const userRole = token.role as string | undefined
+    try {
+      // Call the verify endpoint (under /api/auth/ — public, no circular dep)
+      const baseUrl = new URL(request.url)
+      const verifyResponse = await fetch(`${baseUrl.origin}/api/auth/api-key/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': clientIp,
+          'User-Agent': request.headers.get('user-agent') ?? '',
+        },
+        body: JSON.stringify({ key: authHeader.slice(7) }),
+      })
 
-  if (!userId || !userRole) {
-    return createUnauthorizedResponse('Invalid session token', requestId, clientIp)
+      if (!verifyResponse.ok) {
+        return createUnauthorizedResponse('API key verification failed', requestId, clientIp)
+      }
+
+      const verifyData = await verifyResponse.json() as {
+        valid: boolean
+        userId?: string
+        permissions?: string[]
+        tenantId?: string
+      }
+
+      if (!verifyData.valid || !verifyData.userId) {
+        logAuditEvent({
+          action: 'auth.unauthorized',
+          actor: 'api_key',
+          resource: pathname,
+          resourceType: 'api_route',
+          severity: 'warning',
+          ipAddress: clientIp,
+          userAgent: request.headers.get('user-agent') ?? undefined,
+          requestId,
+          result: 'invalid_api_key',
+        })
+        return createUnauthorizedResponse('Invalid or expired API key', requestId, clientIp)
+      }
+
+      userId = verifyData.userId
+      // API keys use the user's role from their session or default to a scoped role
+      // We look up the role from the verification context; for now, use 'viewer' as
+      // a safe default since API keys shouldn't inherit admin roles implicitly.
+      // The API route itself can escalate based on key permissions.
+      userRole = 'viewer'
+    } catch (error) {
+      logAuditEvent({
+        action: 'auth.api_key_error',
+        actor: 'api_key',
+        resource: pathname,
+        resourceType: 'api_route',
+        severity: 'error',
+        ipAddress: clientIp,
+        userAgent: request.headers.get('user-agent') ?? undefined,
+        requestId,
+        result: 'verification_failed',
+      })
+      return createUnauthorizedResponse('API key verification error', requestId, clientIp)
+    }
+  } else {
+    // ── Session (JWT) authentication path ─────────────────────────────
+    let token
+    try {
+      token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })
+    } catch {
+      return createUnauthorizedResponse('Invalid or expired session', requestId, clientIp)
+    }
+
+    if (!token) {
+      logAuditEvent({
+        action: 'auth.unauthorized',
+        actor: 'anonymous',
+        resource: pathname,
+        resourceType: 'api_route',
+        severity: 'warning',
+        ipAddress: clientIp,
+        userAgent: request.headers.get('user-agent') ?? undefined,
+        requestId,
+        result: 'unauthenticated',
+      })
+      return createUnauthorizedResponse('Authentication required', requestId, clientIp)
+    }
+
+    userId = token.id as string | undefined
+    userRole = token.role as string | undefined
+
+    if (!userId || !userRole) {
+      return createUnauthorizedResponse('Invalid session token', requestId, clientIp)
+    }
   }
 
   // ── Step 4: Rate limiting ──────────────────────────────────────────
@@ -394,6 +469,7 @@ export async function middleware(request: NextRequest) {
   response.headers.set('X-User-Id', userId)
   response.headers.set('X-User-Role', userRole)
   response.headers.set('X-Request-Id', requestId)
+  response.headers.set('X-Auth-Method', authMethod)
 
   applySecurityHeaders(response, requestId)
 

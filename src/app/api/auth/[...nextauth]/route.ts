@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs'
 import { checkAccountLockout, recordFailedAttempt, clearFailedAttempts } from '@/lib/security'
 import { logAuthEvent } from '@/lib/audit'
 import type { AuditSeverity } from '@/lib/audit'
+import { TOTP } from 'otpauth'
 
 // ─── Environment Validation ──────────────────────────────────────────────────
 
@@ -82,11 +83,8 @@ const handler = NextAuth({
           return null
         }
 
-        // ── MFA Check (future: when user has MFA enabled) ─────────────
+        // ── MFA / TOTP Verification ────────────────────────────────────
         if (user.mfaEnabled) {
-          // MFA is enabled but not yet fully implemented.
-          // For now, log that MFA would be required.
-          // The TOTP code would be validated here against user.mfaSecret.
           await logAuthEvent('mfa.challenge', {
             email: credentials.email,
             userId: user.id,
@@ -94,13 +92,45 @@ const handler = NextAuth({
             userAgent,
           })
 
-          // When MFA is fully implemented:
-          // if (!credentials.totpCode) return null
-          // const isValidTotp = verifyTOTP(user.mfaSecret, credentials.totpCode)
-          // if (!isValidTotp) {
-          //   await logAuthEvent('mfa.failed', { email: user.email, userId: user.id, ipAddress, userAgent })
-          //   return null
-          // }
+          if (!credentials.totpCode || !user.mfaSecret) {
+            await logAuthEvent('mfa.failed', {
+              email: user.email,
+              userId: user.id,
+              ipAddress,
+              userAgent,
+              reason: user.mfaSecret ? 'Missing TOTP code' : 'MFA secret not configured',
+            })
+            return null
+          }
+
+          // Reconstruct TOTP instance from stored secret and validate
+          const totp = new TOTP({
+            issuer: 'NEXUS-ONE',
+            label: user.email,
+            secret: user.mfaSecret,
+            digits: 6,
+            period: 30,
+            algorithm: 'SHA1',
+          })
+
+          const delta = totp.validate({ token: credentials.totpCode, window: 1 })
+          if (delta === null) {
+            await logAuthEvent('mfa.failed', {
+              email: user.email,
+              userId: user.id,
+              ipAddress,
+              userAgent,
+              reason: 'Invalid TOTP code',
+            })
+            return null
+          }
+
+          await logAuthEvent('mfa.success', {
+            email: user.email,
+            userId: user.id,
+            ipAddress,
+            userAgent,
+          })
         }
 
         // ── Successful authentication ──────────────────────────────────
@@ -145,9 +175,23 @@ const handler = NextAuth({
         token.mfaEnabled = (user as { mfaEnabled: boolean }).mfaEnabled ?? false
         token.mfaVerified = (user as { mfaEnabled: boolean }).mfaEnabled ? false : true
         token.loginAt = Date.now()
+
+        // Resolve the user's first active tenant membership for multi-tenancy
+        try {
+          const membership = await db.tenantMember.findFirst({
+            where: { userId: user.id, status: 'active' },
+            select: { tenantId: true },
+            orderBy: { joinedAt: 'asc' },
+          })
+          if (membership) {
+            token.tenantId = membership.tenantId
+          }
+        } catch {
+          // Tenant resolution failed — proceed without tenant context
+        }
       }
 
-      // On session update, re-fetch role from DB to catch changes
+      // On session update, re-fetch role and tenant from DB to catch changes
       if (trigger === 'update') {
         try {
           const dbUser = await db.user.findUnique({
@@ -158,6 +202,14 @@ const handler = NextAuth({
             token.role = dbUser.role
             token.mfaEnabled = dbUser.mfaEnabled
           }
+
+          // Re-resolve tenant membership
+          const membership = await db.tenantMember.findFirst({
+            where: { userId: token.id as string, status: 'active' },
+            select: { tenantId: true },
+            orderBy: { joinedAt: 'asc' },
+          })
+          token.tenantId = membership?.tenantId ?? undefined
         } catch {
           // Keep existing token data if DB fetch fails
         }
@@ -172,6 +224,7 @@ const handler = NextAuth({
         ;(session.user as { role: string }).role = token.role as string
         ;(session.user as { mfaEnabled: boolean }).mfaEnabled = token.mfaEnabled as boolean
         ;(session.user as { mfaVerified: boolean }).mfaVerified = token.mfaVerified as boolean
+        ;(session.user as { tenantId?: string }).tenantId = token.tenantId as string | undefined
       }
 
       // Check if session is expired beyond our stricter limit

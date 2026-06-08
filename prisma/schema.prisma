@@ -13,6 +13,8 @@ model Organization {
   industry   String?
   size       String?
   revenue    Float?
+  tenantId   String?
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -20,6 +22,8 @@ model Organization {
   teams      Team[]
   projects   Project[]
   connectors Connector[]
+
+  @@index([tenantId])
 }
 
 model Person {
@@ -174,6 +178,8 @@ model GraphEntity {
   name       String
   properties String?
   embedding  String?
+  tenantId   String?
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -181,6 +187,7 @@ model GraphEntity {
   targetRelations GraphRelation[] @relation("TargetEntity")
 
   @@index([type])
+  @@index([tenantId])
 }
 
 model GraphRelation {
@@ -207,6 +214,8 @@ model Agent {
   avatar       String?
   capabilities String?
   lastAction   String?
+  tenantId     String?
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -215,6 +224,7 @@ model Agent {
   memories  AgentMemory[]
 
   @@index([status])
+  @@index([tenantId])
 }
 
 model AgentAction {
@@ -242,11 +252,14 @@ model Memory {
   importance  Float    @default(0.5)
   tags        String?
   embedding   String?
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([type])
   @@index([importance])
+  @@index([tenantId])
 }
 
 model Prediction {
@@ -259,11 +272,14 @@ model Prediction {
   timeframe   String?
   status      String   @default("active")
   evidence    String?
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([status])
   @@index([type])
+  @@index([tenantId])
 }
 
 model Connector {
@@ -362,9 +378,14 @@ model Tenant {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  members     TenantMember[]
-  auditLogs   AuditLog[]
-  apiKeys     ApiKey[]
+  members       TenantMember[]
+  auditLogs     AuditLog[]
+  apiKeys       ApiKey[]
+  organizations Organization[]
+  agents        Agent[]
+  memories      Memory[]
+  predictions   Prediction[]
+  graphEntities GraphEntity[]
 
   @@index([slug])
   @@index([status])

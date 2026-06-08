@@ -12,6 +12,7 @@ import {
   withSecurityHeaders,
 } from '@/lib/api-utils'
 import { paginate, paginationToSkipTake } from '@/lib/performance'
+import { getTenantId, addTenantFilter } from '@/lib/tenant-context'
 import { NextResponse } from 'next/server'
 
 const VALID_MEMORY_TYPES = ['strategic', 'episodic', 'procedural', 'operational', 'semantic'] as const
@@ -80,6 +81,10 @@ export async function GET(request: Request) {
       ]
     }
 
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const tenantWhere = addTenantFilter(where, tenantId)
+
     // ── Determine if pagination is being used ──────────────────────────
     const usePagination = searchParams.has('page') || searchParams.has('pageSize')
 
@@ -87,13 +92,13 @@ export async function GET(request: Request) {
       // ── Paginated response ─────────────────────────────────────────
       const [memories, total, typeCountRows] = await Promise.all([
         db.memory.findMany({
-          where,
+          where: tenantWhere,
           orderBy: { importance: 'desc' },
           skip,
           take,
         }),
-        db.memory.count({ where }),
-        db.memory.groupBy({ by: ['type'], _count: { type: true }, where }),
+        db.memory.count({ where: tenantWhere }),
+        db.memory.groupBy({ by: ['type'], _count: { type: true }, where: tenantWhere }),
       ])
 
       const typeCounts: Record<string, number> = {}
@@ -117,12 +122,12 @@ export async function GET(request: Request) {
       // ── Legacy (non-paginated) response — backward compatible ────────
       const [memories, total, typeCountRows] = await Promise.all([
         db.memory.findMany({
-          where,
+          where: tenantWhere,
           orderBy: { importance: 'desc' },
           take: 50,
         }),
-        db.memory.count({ where }),
-        db.memory.groupBy({ by: ['type'], _count: { type: true } }),
+        db.memory.count({ where: tenantWhere }),
+        db.memory.groupBy({ by: ['type'], _count: { type: true }, where: tenantWhere }),
       ])
 
       const typeCounts: Record<string, number> = {}

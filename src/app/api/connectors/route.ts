@@ -25,6 +25,7 @@ import {
   getConnectorWithStatus,
   getAllConnectorsWithStatus,
 } from '@/lib/connectors'
+import { getTenantId, addOrgIdFilter, addTenantFilter, getTenantOrgIds } from '@/lib/tenant-context'
 
 // ── Rate Limiters ──────────────────────────────────────────────────────────
 
@@ -53,10 +54,14 @@ export async function GET(request: Request) {
     const action = searchParams.get('action')
     const connectorType = searchParams.get('type')
 
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+    const orgFilter = tenantId ? await addOrgIdFilter({}, tenantId) : {}
+
     // Get specific connector health status
     if (action === 'status' && connectorType) {
       const connectorRecord = await db.connector.findFirst({
-        where: { type: connectorType },
+        where: { type: connectorType, ...orgFilter },
       })
       if (!connectorRecord) {
         return apiErrorResponse(`Connector not found: ${connectorType}`, 'NOT_FOUND', 404)
@@ -67,7 +72,12 @@ export async function GET(request: Request) {
     }
 
     // Default: list all connectors with status
-    const connectors = await getAllConnectorsWithStatus()
+    // Filter DB connectors by tenant org
+    const dbConnectors = tenantId
+      ? await db.connector.findMany({ where: orgFilter })
+      : await db.connector.findMany({})
+
+    const connectors = await Promise.all(dbConnectors.map(getConnectorWithStatus))
 
     // Also include runtime-only connectors that might not be in the DB yet
     const runtimeTypes = connectorRegistry.types()
@@ -136,6 +146,9 @@ export async function POST(request: Request) {
     const action = searchParams.get('action') || 'sync'
     const connectorType = searchParams.get('type')
 
+    // ── Tenant context ─────────────────────────────────────────────────
+    const tenantId = await getTenantId(request)
+
     switch (action) {
       // ── Trigger Manual Sync ────────────────────────────────────────────
       case 'sync': {
@@ -147,8 +160,8 @@ export async function POST(request: Request) {
           return apiErrorResponse(`Connector type not registered: ${connectorType}`, 'NOT_FOUND', 404)
         }
 
-        const tenantId = searchParams.get('tenantId') || undefined
-        const result = await syncEngine.runSync(connectorType, tenantId || '')
+        const syncTenantId = tenantId || searchParams.get('tenantId') || ''
+        const result = await syncEngine.runSync(connectorType, syncTenantId)
 
         return apiResponse({
           action: 'sync',
@@ -159,8 +172,8 @@ export async function POST(request: Request) {
 
       // ── Sync All Connectors ────────────────────────────────────────────
       case 'sync_all': {
-        const tenantId = searchParams.get('tenantId') || ''
-        const results = await syncEngine.runAllSyncs(tenantId)
+        const syncTenantId = tenantId || searchParams.get('tenantId') || ''
+        const results = await syncEngine.runAllSyncs(syncTenantId)
 
         return apiResponse({
           action: 'sync_all',
@@ -186,10 +199,19 @@ export async function POST(request: Request) {
           return apiErrorResponse('name and type are required', 'MISSING_FIELDS', 400)
         }
 
-        // Check if connector already exists
-        const existing = await db.connector.findFirst({
-          where: { type: type as string },
-        })
+        // If tenant context exists, scope the orgId to the tenant's orgs
+        if (tenantId && orgId) {
+          const tenantOrgIds = await getTenantOrgIds(tenantId)
+          if (!tenantOrgIds.includes(orgId as string)) {
+            return apiErrorResponse('Organization does not belong to this tenant', 'TENANT_MISMATCH', 403)
+          }
+        }
+
+        // Check if connector already exists (scoped to tenant if applicable)
+        const existingWhere = tenantId
+          ? { type: type as string, organization: { tenantId } }
+          : { type: type as string }
+        const existing = await db.connector.findFirst({ where: existingWhere })
         if (existing) {
           return apiErrorResponse(`Connector already exists: ${type}`, 'ALREADY_EXISTS', 409)
         }
