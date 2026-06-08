@@ -14,6 +14,7 @@ import { MemoryView } from './memory-view'
 import { SecurityView } from './security-view'
 import { BoardroomView } from './boardroom-view'
 import { TimemachineView } from './timemachine-view'
+import { ConnectorsView } from './connectors-view'
 import { ErrorBoundary } from './error-boundary'
 
 const viewComponents: Record<ViewType, React.ComponentType> = {
@@ -27,6 +28,7 @@ const viewComponents: Record<ViewType, React.ComponentType> = {
   security: SecurityView,
   boardroom: BoardroomView,
   timemachine: TimemachineView,
+  connectors: ConnectorsView,
 }
 
 export function NexusLayout() {

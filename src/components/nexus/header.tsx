@@ -16,6 +16,7 @@ const viewNames: Record<ViewType, string> = {
   security: 'Zero Trust Security',
   boardroom: 'AI Boardroom',
   timemachine: 'Enterprise Time Machine',
+  connectors: 'Connector Framework',
 }
 
 interface HeaderProps {

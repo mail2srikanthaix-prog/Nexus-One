@@ -9,8 +9,10 @@ async function main() {
   await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF`)
 
   // Use raw SQL to wipe all tables and reset auto-increment
-  // This is more reliable than deleteMany() which can leave stale data
   const tableNames = [
+    'QualityScore', 'Feedback', 'ConnectorWebhook', 'ConnectorSync',
+    'DomainEvent', 'AgentMemory', 'AgentWorkflow',
+    'ApiKey', 'TenantMember', 'Tenant',
     'AuditLog', 'ChatMessage', 'AgentAction', 'Event', 'Task',
     'Decision', 'GraphRelation', 'GraphEntity', 'Prediction',
     'Memory', 'Connector', 'Agent', 'Document', 'Person',
@@ -19,9 +21,13 @@ async function main() {
   for (const table of tableNames) {
     await prisma.$executeRawUnsafe(`DELETE FROM "${table}"`)
   }
-  // Reset SQLite auto-increment counters
-  for (const table of tableNames) {
-    await prisma.$executeRawUnsafe(`DELETE FROM sqlite_sequence WHERE name = '${table}'`)
+  // Reset SQLite auto-increment counters (sqlite_sequence may not exist with cuid IDs)
+  try {
+    for (const table of tableNames) {
+      await prisma.$executeRawUnsafe(`DELETE FROM sqlite_sequence WHERE name = '${table}'`)
+    }
+  } catch {
+    // sqlite_sequence table may not exist when using cuid() for IDs - safe to ignore
   }
 
   // Re-enable FK checks
@@ -269,7 +275,7 @@ async function main() {
     { name: 'PagerDuty', type: 'pagerduty', category: 'operations', status: 'error', lastSync: new Date(now.getTime() - 7200000), recordCount: 890 },
     { name: 'Google Workspace', type: 'google', category: 'communication', status: 'connected', lastSync: new Date(now.getTime() - 420000), recordCount: 45678 },
   ]
-  await Promise.all(connectorData.map(c => prisma.connector.create({ data: { ...c, orgId: org.id } })))
+  const connectors = await Promise.all(connectorData.map(c => prisma.connector.create({ data: { ...c, orgId: org.id } })))
   console.log(`✓ Connectors: ${connectorData.length}`)
 
   // ═══════════════════════════════════════════════════════════════════
@@ -287,19 +293,180 @@ async function main() {
   console.log(`✓ Audit Logs: ${auditData.length}`)
 
   // ═══════════════════════════════════════════════════════════════════
-  // Demo User
+  // Demo User (upsert for idempotency)
   // ═══════════════════════════════════════════════════════════════════
   const bcrypt = await import('bcryptjs')
   const passwordHash = await bcrypt.hash('nexus123', 12)
-  await prisma.user.create({
+  const demoUser = await prisma.user.upsert({
+    where: { email: 'admin@nexuscorp.io' },
+    update: { name: 'Sarah Chen', passwordHash, role: 'admin', department: 'Executive' },
+    create: { name: 'Sarah Chen', email: 'admin@nexuscorp.io', passwordHash, role: 'admin', department: 'Executive' },
+  })
+  console.log(`✓ Demo User: ${demoUser.email}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Tenant (Multi-Tenancy)
+  // ═══════════════════════════════════════════════════════════════════
+  const tenant = await prisma.tenant.create({
     data: {
-      name: 'Sarah Chen',
-      email: 'admin@nexuscorp.io',
-      passwordHash,
-      role: 'admin',
-      department: 'Executive',
+      name: 'Nexus Corp',
+      slug: 'nexus-corp',
+      domain: 'nexuscorp.io',
+      plan: 'enterprise',
+      status: 'active',
+      maxUsers: 500,
+      maxAgents: 50,
+      maxStorage: BigInt(107374182400), // 100GB
+      settings: JSON.stringify({
+        features: ['boardroom', 'predictions', 'knowledge_graph', 'security'],
+        ssoEnabled: true,
+        auditRetentionDays: 365,
+      }),
     },
   })
+  console.log(`✓ Tenant: ${tenant.name} (${tenant.slug})`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Tenant Member
+  // ═══════════════════════════════════════════════════════════════════
+  await prisma.tenantMember.create({
+    data: {
+      tenantId: tenant.id,
+      userId: demoUser.id,
+      role: 'super_admin',
+      status: 'active',
+    },
+  })
+  console.log(`✓ Tenant Member: ${demoUser.email} → super_admin`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // API Keys
+  // ═══════════════════════════════════════════════════════════════════
+  const apiKeyHash = await bcrypt.hash('nx_live_demo_key_sk_12345678', 12)
+  const apiKeyData = [
+    {
+      name: 'Production API Key',
+      keyHash: apiKeyHash,
+      keyPrefix: 'nx_live_',
+      tenantId: tenant.id,
+      userId: demoUser.id,
+      permissions: JSON.stringify(['read:all', 'write:all', 'admin:tenant']),
+      expiresAt: new Date(now.getTime() + 365 * 24 * 3600000), // 1 year
+      status: 'active',
+    },
+    {
+      name: 'Webhook Integration Key',
+      keyHash: await bcrypt.hash('nx_live_wh_sk_87654321', 12),
+      keyPrefix: 'nx_live_',
+      tenantId: tenant.id,
+      permissions: JSON.stringify(['read:events', 'write:webhooks']),
+      expiresAt: new Date(now.getTime() + 180 * 24 * 3600000), // 6 months
+      status: 'active',
+    },
+    {
+      name: 'Read-Only Analytics Key',
+      keyHash: await bcrypt.hash('nx_test_ro_sk_11223344', 12),
+      keyPrefix: 'nx_test_',
+      tenantId: tenant.id,
+      permissions: JSON.stringify(['read:dashboard', 'read:agents', 'read:predictions']),
+      status: 'active',
+    },
+  ]
+  await Promise.all(apiKeyData.map(k => prisma.apiKey.create({ data: k })))
+  console.log(`✓ API Keys: ${apiKeyData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Domain Events
+  // ═══════════════════════════════════════════════════════════════════
+  const domainEventData = [
+    { eventType: 'project.created', aggregateId: projects[0].id, aggregateType: 'Project', version: 1, payload: JSON.stringify({ name: 'Nexus One Platform', teamId: teams[0].id }), metadata: JSON.stringify({ correlationId: 'seed-001' }), actorId: demoUser.id, actorType: 'user', tenantId: tenant.id },
+    { eventType: 'project.created', aggregateId: projects[1].id, aggregateType: 'Project', version: 1, payload: JSON.stringify({ name: 'Quantum Security Shield', teamId: teams[3].id }), metadata: JSON.stringify({ correlationId: 'seed-002' }), actorId: demoUser.id, actorType: 'user', tenantId: tenant.id },
+    { eventType: 'agent.action', aggregateId: agents[5].id, aggregateType: 'Agent', version: 1, payload: JSON.stringify({ action: 'vulnerability_scan', result: 'CVE-2024-1234 detected' }), actorId: agents[5].id, actorType: 'agent', tenantId: tenant.id },
+    { eventType: 'task.completed', aggregateId: actionData[4] ? 'task-api-gateway' : 'task-1', aggregateType: 'Task', version: 1, payload: JSON.stringify({ title: 'API gateway rate limiting', completedBy: people[13].id }), actorId: people[13].id, actorType: 'user', tenantId: tenant.id },
+    { eventType: 'decision.approved', aggregateId: decisions[1].id, aggregateType: 'Decision', version: 1, payload: JSON.stringify({ title: 'Implement zero-trust security model', approvedBy: people[6].id }), metadata: JSON.stringify({ correlationId: 'decision-002' }), actorId: people[6].id, actorType: 'user', tenantId: tenant.id },
+    { eventType: 'connector.sync_completed', aggregateId: connectors[0].id, aggregateType: 'Connector', version: 1, payload: JSON.stringify({ name: 'GitHub', recordsSynced: 15847 }), actorType: 'system', tenantId: tenant.id },
+    { eventType: 'agent.workflow_started', aggregateId: agents[7].id, aggregateType: 'Agent', version: 1, payload: JSON.stringify({ type: 'sequential', steps: 3 }), actorId: agents[7].id, actorType: 'agent', tenantId: tenant.id },
+    { eventType: 'prediction.created', aggregateId: 'pred-delay-001', aggregateType: 'Prediction', version: 1, payload: JSON.stringify({ type: 'delay', title: 'Self-Healing Infrastructure Delay', probability: 0.72 }), actorType: 'system', tenantId: tenant.id },
+  ]
+  await Promise.all(domainEventData.map((e, i) =>
+    prisma.domainEvent.create({ data: { ...e, createdAt: new Date(now.getTime() - i * 1800000) } })
+  ))
+  console.log(`✓ Domain Events: ${domainEventData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Feedback
+  // ═══════════════════════════════════════════════════════════════════
+  const feedbackData = [
+    { targetType: 'agent_response', targetId: agents[0].id, userId: demoUser.id, rating: 5, comment: 'CEO Agent provided excellent strategic insights for Q1 review', tags: JSON.stringify(['strategy', 'insightful']) },
+    { targetType: 'agent_response', targetId: agents[5].id, userId: demoUser.id, rating: 4, comment: 'Security Agent detected vulnerability quickly but remediation was partial', tags: JSON.stringify(['security', 'fast-response']) },
+    { targetType: 'prediction', targetId: 'pred-delay-001', userId: demoUser.id, rating: 3, comment: 'Delay prediction was somewhat accurate but timeframe was off', tags: JSON.stringify(['prediction', 'delay']) },
+    { targetType: 'recommendation', targetId: agents[2].id, rating: 4, comment: 'Budget reallocation proposal was well-reasoned and data-backed', tags: JSON.stringify(['finance', 'budget']) },
+    { targetType: 'agent_response', targetId: agents[8].id, rating: 5, comment: 'HR Agent accurately identified attrition risks with actionable recommendations', tags: JSON.stringify(['hr', 'attrition', 'actionable']) },
+    { targetType: 'prediction', targetId: 'pred-churn-001', rating: 2, comment: 'Churn prediction had false positives, needs refinement', tags: JSON.stringify(['prediction', 'churn', 'false-positive']) },
+  ]
+  await Promise.all(feedbackData.map(f => prisma.feedback.create({ data: f })))
+  console.log(`✓ Feedback: ${feedbackData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Agent Workflows
+  // ═══════════════════════════════════════════════════════════════════
+  const workflowData = [
+    {
+      agentId: agents[7].id, type: 'sequential', status: 'completed',
+      definition: JSON.stringify({ steps: ['detect_incident', 'classify_severity', 'route_to_team'] }),
+      context: JSON.stringify({ incidentId: 'INC-2024-089', severity: 'P2' }),
+      result: JSON.stringify({ classified: true, routed: true, team: 'platform-engineering' }),
+      startedAt: new Date(now.getTime() - 3600000),
+      completedAt: new Date(now.getTime() - 3500000),
+    },
+    {
+      agentId: agents[5].id, type: 'parallel', status: 'running',
+      definition: JSON.stringify({ steps: ['scan_dependencies', 'check_compliance', 'verify_patches'] }),
+      context: JSON.stringify({ cveId: 'CVE-2024-1234', affectedServices: 5 }),
+    },
+    {
+      agentId: agents[0].id, type: 'approval', status: 'pending',
+      definition: JSON.stringify({ steps: ['generate_proposal', 'require_approval', 'execute_plan'] }),
+      context: JSON.stringify({ proposalType: 'budget_reallocation', amount: 200000 }),
+    },
+  ]
+  await Promise.all(workflowData.map(w => prisma.agentWorkflow.create({ data: w })))
+  console.log(`✓ Agent Workflows: ${workflowData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Agent Memories
+  // ═══════════════════════════════════════════════════════════════════
+  const agentMemoryData = [
+    { agentId: agents[0].id, type: 'long_term', category: 'strategy', content: 'Company pivoted to AI-first strategy in 2024. All product lines must integrate AI by Q3 2025.', importance: 0.95, accessCount: 24 },
+    { agentId: agents[5].id, type: 'episodic', category: 'security', content: 'CVE-2024-1234 was a critical log4j-style vulnerability. Patched 4/5 services within SLA.', importance: 0.9, accessCount: 12 },
+    { agentId: agents[7].id, type: 'procedural', category: 'workflow', content: 'Incident routing procedure: P1→CTO+oncall, P2→team-lead, P3→auto-assign. Auto-remediation for known patterns.', importance: 0.85, accessCount: 45 },
+    { agentId: agents[9].id, type: 'short_term', category: 'monitoring', content: 'Current API latency baseline: P50=120ms, P95=340ms, P99=890ms. Anomaly threshold: P95>500ms.', importance: 0.7, accessCount: 156 },
+    { agentId: agents[2].id, type: 'long_term', category: 'finance', content: 'Q2 budget constraints require 15% reduction in discretionary spending. R&D budget protected.', importance: 0.88, accessCount: 8 },
+  ]
+  await Promise.all(agentMemoryData.map(m => prisma.agentMemory.create({ data: m })))
+  console.log(`✓ Agent Memories: ${agentMemoryData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Connector Syncs
+  // ═══════════════════════════════════════════════════════════════════
+  const syncData = [
+    { connectorId: connectors[0].id, status: 'completed', recordsSynced: 1247, recordsFailed: 3, startedAt: new Date(now.getTime() - 300000), completedAt: new Date(now.getTime() - 280000) },
+    { connectorId: connectors[3].id, status: 'running', recordsSynced: 5421, recordsFailed: 12, startedAt: new Date(now.getTime() - 120000) },
+    { connectorId: connectors[10].id, status: 'failed', recordsSynced: 0, recordsFailed: 0, error: 'Connection timeout after 30s. PagerDuty API unreachable.', startedAt: new Date(now.getTime() - 7200000) },
+  ]
+  await Promise.all(syncData.map(s => prisma.connectorSync.create({ data: s })))
+  console.log(`✓ Connector Syncs: ${syncData.length}`)
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Connector Webhooks
+  // ═══════════════════════════════════════════════════════════════════
+  const webhookData = [
+    { connectorId: connectors[0].id, eventType: 'push', payload: JSON.stringify({ ref: 'refs/heads/main', commits: 3, repository: 'nexus-platform' }), signature: 'sha256=abc123def456', status: 'processed', attempts: 1, lastAttemptAt: new Date(now.getTime() - 300000) },
+    { connectorId: connectors[1].id, eventType: 'message', payload: JSON.stringify({ channel: '#incidents', user: 'monitoring-bot', text: 'P2: API latency spike detected' }), status: 'processed', attempts: 1, lastAttemptAt: new Date(now.getTime() - 60000) },
+    { connectorId: connectors[10].id, eventType: 'incident.trigger', payload: JSON.stringify({ incidentId: 'PD-2024-456', severity: 'high', service: 'api-gateway' }), status: 'pending', attempts: 2, lastAttemptAt: new Date(now.getTime() - 300000) },
+  ]
+  await Promise.all(webhookData.map(w => prisma.connectorWebhook.create({ data: w })))
+  console.log(`✓ Connector Webhooks: ${webhookData.length}`)
 
   console.log('\n═══════════════════════════════════════')
   console.log('  🎉 Seed completed successfully!')
@@ -319,8 +486,17 @@ async function main() {
   console.log(`  ${connectorData.length} connectors`)
   console.log(`  ${auditData.length} audit logs`)
   console.log(`  1 demo user`)
+  console.log(`  1 tenant`)
+  console.log(`  ${apiKeyData.length} API keys`)
+  console.log(`  ${domainEventData.length} domain events`)
+  console.log(`  ${feedbackData.length} feedback entries`)
+  console.log(`  ${workflowData.length} agent workflows`)
+  console.log(`  ${agentMemoryData.length} agent memories`)
+  console.log(`  ${syncData.length} connector syncs`)
+  console.log(`  ${webhookData.length} connector webhooks`)
   console.log('───────────────────────────────────────')
   console.log('  Login: admin@nexuscorp.io / nexus123')
+  console.log('  Tenant: nexus-corp (enterprise)')
   console.log('═══════════════════════════════════════')
 }
 

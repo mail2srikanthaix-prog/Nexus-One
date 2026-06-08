@@ -1,0 +1,399 @@
+# =============================================================================
+# Nexus-One Kubernetes Deployment — Production Configuration
+# Includes: Namespace, Deployment, Service, ConfigMap, Secret,
+#           HPA, NetworkPolicy, PodDisruptionBudget
+# =============================================================================
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+    app.kubernetes.io/part-of: nexus-one
+    app.kubernetes.io/managed-by: kubectl
+    environment: production
+
+---
+# ─── ConfigMap — Environment Variables ──────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-one-config
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+data:
+  NODE_ENV: "production"
+  NEXTAUTH_URL: "https://nexus-one.example.com"
+  REDIS_URL: "redis://nexus-one-redis:6379"
+  NEO4J_URI: "bolt://nexus-one-neo4j:7687"
+  NEO4J_USER: "neo4j"
+  QDRANT_URL: "http://nexus-one-qdrant:6333"
+  KAFKA_BROKERS: "nexus-one-kafka:9092"
+  LOG_LEVEL: "info"
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9091"
+
+---
+# ─── Secret Template — Sensitive Values ─────────────────────────────────────
+# IMPORTANT: Replace base64-encoded values with real secrets in production
+# Use sealed-secrets, external-secrets, or Vault for production secret management
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nexus-one-secrets
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+type: Opaque
+data:
+  # Base64-encoded values — REPLACE THESE
+  # echo -n "your-actual-secret" | base64
+  NEXTAUTH_SECRET: "Q0hBTkdFX01FX1NFQ1JFVF9GT1JfUFJPRFVDVElPTg=="
+  DATABASE_URL: "cG9zdGdyZXM6Ly9uZXh1czpjaGFuZ2VfbWVAcG9zdGdyZXM6NTQzMi9uZXh1c29uZQ=="
+  REDIS_PASSWORD: "Y2hhbmdlX21lX3JlZGlz"
+  NEO4J_PASSWORD: "Y2hhbmdlX21lX25lbzRq"
+  API_KEY_SALT: "Y2hhbmdlX21lX3NhbHQ="
+
+---
+# ─── Deployment ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+    app.kubernetes.io/component: application
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-one
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nexus-one
+        app.kubernetes.io/component: application
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: nexus-one
+      terminationGracePeriodSeconds: 60
+      # Pod anti-affinity for high availability
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - nexus-one
+                topologyKey: kubernetes.io/hostname
+      # Security context — non-root, read-only filesystem
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nexus-one
+          image: nexus-one:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: nexus-one-config
+            - secretRef:
+                name: nexus-one-secrets
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          # Resource limits and requests
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          # Liveness probe — restart pod if unhealthy
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          # Readiness probe — remove from service if not ready
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Startup probe — give app time to start
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          # Security context at container level
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+
+---
+# ─── Service ────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: nexus-one
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9091
+      targetPort: metrics
+      protocol: TCP
+
+---
+# ─── HorizontalPodAutoscaler ────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nexus-one
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Pods
+      pods:
+        metric:
+          name: http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "1000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+      selectPolicy: Min
+
+---
+# ─── NetworkPolicy ──────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-one
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: monitoring
+      ports:
+        - port: 9091
+          protocol: TCP
+    # Allow health checks from within same namespace
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 3000
+          protocol: TCP
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow PostgreSQL access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: database
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Allow Redis access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: cache
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Allow Kafka access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: messaging
+      ports:
+        - port: 9092
+          protocol: TCP
+
+---
+# ─── PodDisruptionBudget ────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nexus-one
+  minAvailable: "50%"
+
+---
+# ─── ServiceAccount ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+  labels:
+    app.kubernetes.io/name: nexus-one
+
+---
+# ─── RBAC — Minimal Permissions ────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["nexus-one-config"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["nexus-one-secrets"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nexus-one
+  namespace: nexus-one
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nexus-one
+subjects:
+  - kind: ServiceAccount
+    name: nexus-one
+    namespace: nexus-one

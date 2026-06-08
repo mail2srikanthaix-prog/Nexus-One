@@ -1,9 +1,15 @@
 import { getServerSession } from 'next-auth'
 import { apiResponse } from '@/lib/api-utils'
-import NextAuth from 'next-auth'
+
+// Re-use the NextAuth handler's config by importing the route
+// We need to reconstruct the authOptions here for getServerSession
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { compare } from 'bcryptjs'
 import { db } from '@/lib/db'
+import { compare } from 'bcryptjs'
+
+if (!process.env.NEXTAUTH_SECRET) {
+  throw new Error('NEXTAUTH_SECRET environment variable is not set')
+}
 
 const authOptions = {
   providers: [
@@ -15,7 +21,7 @@ const authOptions = {
       },
       async authorize(credentials: Record<string, string> | undefined) {
         if (!credentials?.email || !credentials?.password) return null
-        const user = await db.user.findUnique({ where: { email: credentials.email } })
+        const user = await db.user.findUnique({ where: { email: credentials.email.toLowerCase().trim() } })
         if (!user) return null
         const isValid = await compare(credentials.password, user.passwordHash)
         if (!isValid) return null
@@ -23,8 +29,8 @@ const authOptions = {
       },
     }),
   ],
-  session: { strategy: 'jwt' as const, maxAge: 24 * 60 * 60 },
-  secret: process.env.NEXTAUTH_SECRET || 'nexus-one-dev-secret-change-in-production',
+  session: { strategy: 'jwt' as const, maxAge: 8 * 60 * 60 },
+  secret: process.env.NEXTAUTH_SECRET,
 }
 
 export async function GET() {

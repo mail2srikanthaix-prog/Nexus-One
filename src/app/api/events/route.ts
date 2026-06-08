@@ -10,6 +10,7 @@ import {
   validateEnum,
   withSecurityHeaders,
 } from '@/lib/api-utils'
+import { paginate, paginationToSkipTake } from '@/lib/performance'
 import { NextResponse } from 'next/server'
 
 const VALID_SEVERITIES = ['info', 'warning', 'error', 'critical'] as const
@@ -50,45 +51,109 @@ export async function GET(request: Request) {
     }
     const severity = severityResult.value
 
+    // ── Pagination params (backward compatible: defaults page=1, pageSize=50) ──
+    const pageResult = validateInt(searchParams.get('page'), 'page', { min: 1, default: 1 })
+    if (!pageResult.valid) {
+      return apiErrorResponse(pageResult.error!, 'INVALID_PAGE', 400)
+    }
+
+    const pageSizeResult = validateInt(searchParams.get('pageSize'), 'pageSize', { min: 1, max: 100, default: 50 })
+    if (!pageSizeResult.valid) {
+      return apiErrorResponse(pageSizeResult.error!, 'INVALID_PAGE_SIZE', 400)
+    }
+
+    const { skip, take, page, pageSize } = paginationToSkipTake({
+      page: pageResult.value,
+      pageSize: pageSizeResult.value,
+    })
+
     const where = severity ? { severity } : {}
 
-    // ── Fetch paginated events ─────────────────────────────────────────
-    const [events, totalCount] = await Promise.all([
-      db.event.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: limit,
-        include: {
-          person: { select: { name: true, role: true } },
-          project: { select: { name: true, status: true } },
-        },
-      }),
-      db.event.count({ where }),
-    ])
+    // ── Determine if pagination is being used ──────────────────────────
+    const usePagination = searchParams.has('page') || searchParams.has('pageSize')
 
-    // ── Compute counts from fetched events instead of a separate full-table query ──
-    // For type/severity breakdowns, use separate lightweight count queries
-    const [allTypeCounts, allSeverityCounts] = await Promise.all([
-      db.event.groupBy({ by: ['type'], _count: { type: true } }),
-      db.event.groupBy({ by: ['severity'], _count: { severity: true } }),
-    ])
+    if (usePagination) {
+      // ── Paginated response ─────────────────────────────────────────
+      const [events, totalCount] = await Promise.all([
+        db.event.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+          include: {
+            person: { select: { name: true, role: true } },
+            project: { select: { name: true, status: true } },
+          },
+        }),
+        db.event.count({ where }),
+      ])
 
-    const typeCounts: Record<string, number> = {}
-    for (const row of allTypeCounts) {
-      typeCounts[row.type] = row._count.type
+      // ── Compute type/severity counts from all data (not just page) ──
+      const [allTypeCounts, allSeverityCounts] = await Promise.all([
+        db.event.groupBy({ by: ['type'], _count: { type: true }, where }),
+        db.event.groupBy({ by: ['severity'], _count: { severity: true }, where }),
+      ])
+
+      const typeCounts: Record<string, number> = {}
+      for (const row of allTypeCounts) {
+        typeCounts[row.type] = row._count.type
+      }
+
+      const severityCounts: Record<string, number> = {}
+      for (const row of allSeverityCounts) {
+        severityCounts[row.severity] = row._count.severity
+      }
+
+      const paginatedResult = await paginate(
+        Promise.resolve(events),
+        Promise.resolve(totalCount),
+        { page, pageSize },
+      )
+
+      return apiResponse({
+        events: paginatedResult.data,
+        typeCounts,
+        severityCounts,
+        total: paginatedResult.pagination.totalItems,
+        pagination: paginatedResult.pagination,
+      })
+    } else {
+      // ── Legacy (non-paginated) response — backward compatible ────────
+      const [events, totalCount] = await Promise.all([
+        db.event.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          include: {
+            person: { select: { name: true, role: true } },
+            project: { select: { name: true, status: true } },
+          },
+        }),
+        db.event.count({ where }),
+      ])
+
+      const [allTypeCounts, allSeverityCounts] = await Promise.all([
+        db.event.groupBy({ by: ['type'], _count: { type: true } }),
+        db.event.groupBy({ by: ['severity'], _count: { severity: true } }),
+      ])
+
+      const typeCounts: Record<string, number> = {}
+      for (const row of allTypeCounts) {
+        typeCounts[row.type] = row._count.type
+      }
+
+      const severityCounts: Record<string, number> = {}
+      for (const row of allSeverityCounts) {
+        severityCounts[row.severity] = row._count.severity
+      }
+
+      return apiResponse({
+        events,
+        typeCounts,
+        severityCounts,
+        total: totalCount,
+      })
     }
-
-    const severityCounts: Record<string, number> = {}
-    for (const row of allSeverityCounts) {
-      severityCounts[row.severity] = row._count.severity
-    }
-
-    return apiResponse({
-      events,
-      typeCounts,
-      severityCounts,
-      total: totalCount,
-    })
   } catch (error) {
     return handleApiError(error, 'Events API')
   }

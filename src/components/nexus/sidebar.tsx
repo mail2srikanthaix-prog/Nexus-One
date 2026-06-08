@@ -15,6 +15,7 @@ import {
   Clock,
   Settings,
   ChevronRight,
+  Plug,
 } from 'lucide-react'
 import Image from 'next/image'
 
@@ -29,6 +30,7 @@ export type ViewType =
   | 'security'
   | 'boardroom'
   | 'timemachine'
+  | 'connectors'
 
 interface NavItem {
   id: ViewType
@@ -47,6 +49,7 @@ const navItems: NavItem[] = [
   { id: 'security', icon: Shield, label: 'Security' },
   { id: 'boardroom', icon: Users, label: 'AI Boardroom' },
   { id: 'timemachine', icon: Clock, label: 'Time Machine' },
+  { id: 'connectors', icon: Plug, label: 'Connectors' },
 ]
 
 interface SidebarProps {

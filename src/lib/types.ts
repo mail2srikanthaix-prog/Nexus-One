@@ -321,3 +321,144 @@ export interface SecurityResponse {
   securityPredictions: SecurityPrediction[]
   severityCounts: Record<string, number>
 }
+
+// ─── Agent Framework ─────────────────────────────────────────────────────────
+
+export interface AgentToolDefinition {
+  name: string
+  description: string
+  parameters: Record<
+    string,
+    {
+      type: 'string' | 'number' | 'boolean'
+      description: string
+      required?: boolean
+      enum?: string[]
+    }
+  >
+}
+
+export interface AgentToolResult {
+  name: string
+  params: Record<string, unknown>
+  result: {
+    success: boolean
+    data?: unknown
+    error?: string
+    metadata?: Record<string, unknown>
+  }
+}
+
+export interface AgentFrameworkInfo {
+  agentType: string
+  availableTools: string[]
+  toolDefinitions: AgentToolDefinition[]
+}
+
+// ─── Connectors ──────────────────────────────────────────────────────────────
+
+export interface ConnectorHealthStatus {
+  status: 'healthy' | 'degraded' | 'down'
+  latency: number
+  lastSync?: string
+  lastError?: string
+  uptime: number
+}
+
+export interface ConnectorSyncRecord {
+  id: string
+  status: string
+  recordsSynced: number
+  recordsCreated: number
+  recordsUpdated: number
+  recordsFailed: number
+  error?: string
+  duration: number
+  startedAt?: string
+  completedAt?: string
+  createdAt: string
+}
+
+export interface ConnectorWithStatus {
+  id: string
+  name: string
+  type: string
+  category: string
+  status: string
+  lastSync: string | null
+  recordCount: number | null
+  orgId: string | null
+  createdAt: string
+  updatedAt: string
+  health?: ConnectorHealthStatus
+  syncHistory?: ConnectorSyncRecord[]
+}
+
+export interface ConnectorsResponse {
+  connectors: ConnectorWithStatus[]
+  summary: {
+    total: number
+    healthy: number
+    degraded: number
+    down: number
+  }
+  runtimeTypes: string[]
+}
+
+export interface ConnectorSyncResponse {
+  action: string
+  connectorType: string
+  result: {
+    success: boolean
+    recordsProcessed: number
+    recordsCreated: number
+    recordsUpdated: number
+    recordsFailed: number
+    errors: Array<{ record: unknown; error: string }>
+    duration: number
+    nextSyncAt: string
+  }
+}
+
+// ─── Domain Events ───────────────────────────────────────────────────────────
+
+export interface DomainEventPayload {
+  eventType: string
+  aggregateId: string
+  aggregateType: string
+  payload: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  actorId?: string
+  actorType?: 'user' | 'agent' | 'system'
+  tenantId?: string
+  title?: string
+  severity?: 'info' | 'warning' | 'error' | 'critical'
+  description?: string
+  source?: string
+  personId?: string
+  projectId?: string
+}
+
+export interface DomainEventResponse {
+  domainEvent: {
+    id: string
+    eventType: string
+    aggregateId: string
+    aggregateType: string
+    version: number
+    payload: Record<string, unknown>
+    metadata: Record<string, unknown> | null
+    actorId: string | null
+    actorType: string | null
+    tenantId: string | null
+    createdAt: string
+  }
+  event: {
+    id: string
+    type: string
+    title: string
+    severity: string
+    source: string
+    createdAt: string
+  }
+}

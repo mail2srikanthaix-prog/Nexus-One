@@ -7,9 +7,11 @@ import {
   methodNotAllowed,
   readRateLimiter,
   validateString,
+  validateInt,
   validateEnum,
   withSecurityHeaders,
 } from '@/lib/api-utils'
+import { paginate, paginationToSkipTake } from '@/lib/performance'
 import { NextResponse } from 'next/server'
 
 const VALID_MEMORY_TYPES = ['strategic', 'episodic', 'procedural', 'operational', 'semantic'] as const
@@ -50,6 +52,22 @@ export async function GET(request: Request) {
     }
     const q = qResult.value
 
+    // ── Pagination params (backward compatible: defaults page=1, pageSize=50) ──
+    const pageResult = validateInt(searchParams.get('page'), 'page', { min: 1, default: 1 })
+    if (!pageResult.valid) {
+      return apiErrorResponse(pageResult.error!, 'INVALID_PAGE', 400)
+    }
+
+    const pageSizeResult = validateInt(searchParams.get('pageSize'), 'pageSize', { min: 1, max: 100, default: 50 })
+    if (!pageSizeResult.valid) {
+      return apiErrorResponse(pageSizeResult.error!, 'INVALID_PAGE_SIZE', 400)
+    }
+
+    const { skip, take, page, pageSize } = paginationToSkipTake({
+      page: pageResult.value,
+      pageSize: pageSizeResult.value,
+    })
+
     // ── Build where clause ─────────────────────────────────────────────
     const where: Record<string, unknown> = {}
     if (type) where.type = type
@@ -62,27 +80,62 @@ export async function GET(request: Request) {
       ]
     }
 
-    const [memories, total, typeCountRows] = await Promise.all([
-      db.memory.findMany({
-        where,
-        orderBy: { importance: 'desc' },
-        take: 50,
-      }),
-      db.memory.count({ where }),
-      // Use groupBy for type counts instead of fetching all memories
-      db.memory.groupBy({ by: ['type'], _count: { type: true } }),
-    ])
+    // ── Determine if pagination is being used ──────────────────────────
+    const usePagination = searchParams.has('page') || searchParams.has('pageSize')
 
-    const typeCounts: Record<string, number> = {}
-    for (const row of typeCountRows) {
-      typeCounts[row.type] = row._count.type
+    if (usePagination) {
+      // ── Paginated response ─────────────────────────────────────────
+      const [memories, total, typeCountRows] = await Promise.all([
+        db.memory.findMany({
+          where,
+          orderBy: { importance: 'desc' },
+          skip,
+          take,
+        }),
+        db.memory.count({ where }),
+        db.memory.groupBy({ by: ['type'], _count: { type: true }, where }),
+      ])
+
+      const typeCounts: Record<string, number> = {}
+      for (const row of typeCountRows) {
+        typeCounts[row.type] = row._count.type
+      }
+
+      const paginatedResult = await paginate(
+        Promise.resolve(memories),
+        Promise.resolve(total),
+        { page, pageSize },
+      )
+
+      return apiResponse({
+        memories: paginatedResult.data,
+        typeCounts,
+        total: paginatedResult.pagination.totalItems,
+        pagination: paginatedResult.pagination,
+      })
+    } else {
+      // ── Legacy (non-paginated) response — backward compatible ────────
+      const [memories, total, typeCountRows] = await Promise.all([
+        db.memory.findMany({
+          where,
+          orderBy: { importance: 'desc' },
+          take: 50,
+        }),
+        db.memory.count({ where }),
+        db.memory.groupBy({ by: ['type'], _count: { type: true } }),
+      ])
+
+      const typeCounts: Record<string, number> = {}
+      for (const row of typeCountRows) {
+        typeCounts[row.type] = row._count.type
+      }
+
+      return apiResponse({
+        memories,
+        typeCounts,
+        total,
+      })
     }
-
-    return apiResponse({
-      memories,
-      typeCounts,
-      total,
-    })
   } catch (error) {
     return handleApiError(error, 'Memory API')
   }

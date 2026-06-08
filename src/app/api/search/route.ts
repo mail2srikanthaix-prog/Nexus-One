@@ -9,10 +9,13 @@ import {
   validateString,
   validateEnum,
   withSecurityHeaders,
+  validateInt,
 } from '@/lib/api-utils'
 import { NextResponse } from 'next/server'
+import { semanticSearch, keywordSearch } from '@/lib/vector-search'
 
 const VALID_SEARCH_TYPES = ['all', 'people', 'projects', 'decisions', 'events', 'memories', 'tasks', 'predictions'] as const
+const VALID_SEARCH_MODES = ['keyword', 'semantic', 'hybrid'] as const
 
 // Method guard: only GET and HEAD allowed
 export async function POST() { return methodNotAllowed(['GET', 'HEAD']) }
@@ -50,65 +53,127 @@ export async function GET(request: Request) {
     }
     const type = typeResult.value || 'all'
 
-    // ── Search Execution ───────────────────────────────────────────────
-    const results: Record<string, unknown[]> = {}
+    const modeResult = validateEnum(searchParams.get('mode'), 'mode', [...VALID_SEARCH_MODES])
+    if (!modeResult.valid) {
+      return apiErrorResponse(modeResult.error!, 'INVALID_MODE', 400)
+    }
+    const mode = modeResult.value || 'keyword'
+
+    const limitResult = validateInt(searchParams.get('limit'), 'limit', { min: 1, max: 50, default: 10 })
+    if (!limitResult.valid) {
+      return apiErrorResponse(limitResult.error!, 'INVALID_LIMIT', 400)
+    }
+    const limit = limitResult.value
+
+    // ── Semantic / Hybrid Search ───────────────────────────────────────
+    if (mode === 'semantic' || mode === 'hybrid') {
+      const entityTypeMap: Record<string, string[]> = {
+        all: undefined,
+        people: ['person'],
+        projects: ['project'],
+        decisions: ['decision'],
+        events: ['event'],
+        memories: ['memory', 'agentMemory'],
+        tasks: ['task'],
+        predictions: ['prediction'],
+      }
+
+      const entityTypes = entityTypeMap[type]
+      const hybridWeight = mode === 'hybrid' ? 0.5 : 1.0
+
+      const searchResult = await semanticSearch(q, {
+        limit,
+        minScore: 0.1,
+        entityTypes,
+        hybridWeight,
+      })
+
+      return apiResponse({
+        query: q,
+        type,
+        mode: searchResult.method,
+        totalResults: searchResult.totalResults,
+        searchTimeMs: searchResult.searchTimeMs,
+        results: searchResult.results,
+      })
+    }
+
+    // ── Keyword Search (default, backward compatible) ──────────────────
+    if (!q) {
+      // Return empty results for empty query in keyword mode (backward compatible)
+      const results: Record<string, unknown[]> = {}
+      if (type === 'all' || type === 'people') results.people = []
+      if (type === 'all' || type === 'projects') results.projects = []
+      if (type === 'all' || type === 'decisions') results.decisions = []
+      if (type === 'all' || type === 'events') results.events = []
+      if (type === 'all' || type === 'memories') results.memories = []
+      if (type === 'all' || type === 'tasks') results.tasks = []
+      if (type === 'all' || type === 'predictions') results.predictions = []
+
+      return apiResponse({
+        query: q,
+        type,
+        mode: 'keyword',
+        totalResults: 0,
+        results,
+      })
+    }
+
+    // Try enhanced keyword search first
+    const keywordResult = await keywordSearch(q, {
+      limit,
+      minScore: 0.15,
+    })
+
+    // Also run the legacy search for backward compatibility
+    const legacyResults: Record<string, unknown[]> = {}
 
     if (type === 'all' || type === 'people') {
-      const people = q
-        ? await db.person.findMany({ where: { OR: [{ name: { contains: q } }, { email: { contains: q } }, { role: { contains: q } }, { department: { contains: q } }] }, take: 10 })
-        : await db.person.findMany({ take: 10 })
-      results.people = people
+      const people = await db.person.findMany({ where: { OR: [{ name: { contains: q } }, { email: { contains: q } }, { role: { contains: q } }, { department: { contains: q } }] }, take: 10 })
+      legacyResults.people = people
     }
 
     if (type === 'all' || type === 'projects') {
-      const projects = q
-        ? await db.project.findMany({ where: { OR: [{ name: { contains: q } }, { description: { contains: q } }] }, take: 10 })
-        : await db.project.findMany({ take: 10 })
-      results.projects = projects
+      const projects = await db.project.findMany({ where: { OR: [{ name: { contains: q } }, { description: { contains: q } }] }, take: 10 })
+      legacyResults.projects = projects
     }
 
     if (type === 'all' || type === 'decisions') {
-      const decisions = q
-        ? await db.decision.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }, { reasoning: { contains: q } }] }, take: 10 })
-        : await db.decision.findMany({ take: 10 })
-      results.decisions = decisions
+      const decisions = await db.decision.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }, { reasoning: { contains: q } }] }, take: 10 })
+      legacyResults.decisions = decisions
     }
 
     if (type === 'all' || type === 'events') {
-      const events = q
-        ? await db.event.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }, { source: { contains: q } }] }, orderBy: { createdAt: 'desc' }, take: 10 })
-        : await db.event.findMany({ orderBy: { createdAt: 'desc' }, take: 10 })
-      results.events = events
+      const events = await db.event.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }, { source: { contains: q } }] }, orderBy: { createdAt: 'desc' }, take: 10 })
+      legacyResults.events = events
     }
 
     if (type === 'all' || type === 'memories') {
-      const memories = q
-        ? await db.memory.findMany({ where: { OR: [{ title: { contains: q } }, { content: { contains: q } }, { tags: { contains: q } }] }, take: 10 })
-        : await db.memory.findMany({ take: 10 })
-      results.memories = memories
+      const memories = await db.memory.findMany({ where: { OR: [{ title: { contains: q } }, { content: { contains: q } }, { tags: { contains: q } }] }, take: 10 })
+      legacyResults.memories = memories
     }
 
     if (type === 'all' || type === 'tasks') {
-      const tasks = q
-        ? await db.task.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }] }, take: 10 })
-        : await db.task.findMany({ take: 10 })
-      results.tasks = tasks
+      const tasks = await db.task.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }] }, take: 10 })
+      legacyResults.tasks = tasks
     }
 
     if (type === 'all' || type === 'predictions') {
-      const predictions = q
-        ? await db.prediction.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }] }, take: 10 })
-        : await db.prediction.findMany({ take: 10 })
-      results.predictions = predictions
+      const predictions = await db.prediction.findMany({ where: { OR: [{ title: { contains: q } }, { description: { contains: q } }] }, take: 10 })
+      legacyResults.predictions = predictions
     }
 
-    const totalResults = Object.values(results).reduce((acc, arr) => acc + arr.length, 0)
+    const totalLegacyResults = Object.values(legacyResults).reduce((acc, arr) => acc + arr.length, 0)
 
     return apiResponse({
       query: q,
       type,
-      totalResults,
-      results,
+      mode: 'keyword',
+      totalResults: totalLegacyResults,
+      searchTimeMs: keywordResult.searchTimeMs,
+      results: legacyResults,
+      // Include scored results from the enhanced engine
+      scoredResults: keywordResult.results,
     })
   } catch (error) {
     return handleApiError(error, 'Search API')

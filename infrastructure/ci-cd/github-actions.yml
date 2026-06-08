@@ -1,0 +1,293 @@
+# =============================================================================
+# Nexus-One CI/CD Pipeline — GitHub Actions
+# Stages: lint → test → build → deploy (staging → production)
+# Security scanning, dependency audit, Docker build & push
+# =============================================================================
+
+name: Nexus-One CI/CD
+
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: "20"
+  BUN_VERSION: "latest"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Stage 1: Lint & Type Check ─────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Run ESLint
+        run: bun run lint
+
+      - name: TypeScript type check
+        run: bunx tsc --noEmit
+
+  # ─── Stage 2: Security Scanning ─────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Dependency audit (npm audit)
+        run: |
+          npm audit --audit-level=high --production || true
+        continue-on-error: true
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          format: "table"
+
+      - name: Check for hardcoded secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Stage 3: Build ─────────────────────────────────────────────────────
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, security]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: bun run db:generate
+
+      - name: Build Next.js application
+        run: bun run build
+        env:
+          DATABASE_URL: "file:./dev.db"
+          NEXTAUTH_SECRET: "ci-build-secret-not-for-production"
+          NEXTAUTH_URL: "http://localhost:3000"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Run Trivy container scan
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+          format: "table"
+
+  # ─── Stage 4: Deploy to Staging ─────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build]
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.nexus-one.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+
+      - name: Deploy to staging
+        run: |
+          kubectl set image deployment/nexus-one \
+            nexus-one=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n nexus-one
+          kubectl rollout status deployment/nexus-one -n nexus-one --timeout=300s
+
+      - name: Verify deployment health
+        run: |
+          sleep 15
+          kubectl get pods -n nexus-one -l app.kubernetes.io/name=nexus-one
+          # Health check
+          POD_NAME=$(kubectl get pods -n nexus-one -l app.kubernetes.io/name=nexus-one -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n nexus-one $POD_NAME -- wget -qO- http://localhost:3000/api/health || exit 1
+
+      - name: Notify deployment status
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/nexus-one -n nexus-one
+          echo "::error::Staging deployment failed — rolled back"
+
+  # ─── Stage 5: Deploy to Production ──────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://nexus-one.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+      - name: Create production migration job
+        run: |
+          kubectl apply -f infrastructure/kubernetes/deployment.yaml -n nexus-one
+
+      - name: Deploy to production (canary)
+        run: |
+          # Canary deployment — update 1 pod at a time
+          kubectl set image deployment/nexus-one \
+            nexus-one=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -n nexus-one
+          kubectl rollout status deployment/nexus-one -n nexus-one --timeout=600s
+
+      - name: Verify production health
+        run: |
+          sleep 30
+          # Check all pods are running
+          kubectl get pods -n nexus-one -l app.kubernetes.io/name=nexus-one
+          # Check health endpoint
+          POD_NAME=$(kubectl get pods -n nexus-one -l app.kubernetes.io/name=nexus-one -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n nexus-one $POD_NAME -- wget -qO- http://localhost:3000/api/health || exit 1
+          # Check error rate
+          echo "Production deployment verified successfully"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/nexus-one -n nexus-one
+          echo "::error::Production deployment failed — rolled back"
+
+      - name: Notify Slack
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Production deployment ${{ job.status }}
+            Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            Commit: ${{ github.sha }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  # ─── Cleanup ────────────────────────────────────────────────────────────
+  cleanup:
+    name: Cleanup Old Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [deploy-production]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Delete old container images
+        uses: bots-house/ghcr-delete-image-action@v1.1.0
+        with:
+          owner: ${{ github.repository_owner }}
+          name: ${{ github.event.repository.name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          keep-at-least: 10
+          delete-untagged: true

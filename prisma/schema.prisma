@@ -138,6 +138,7 @@ model Document {
   type        String   @default("general")
   authorId    String?
   author      Person?  @relation(fields: [authorId], references: [id])
+  embedding   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -172,6 +173,7 @@ model GraphEntity {
   type       String
   name       String
   properties String?
+  embedding  String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -208,7 +210,9 @@ model Agent {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  actions     AgentAction[]
+  actions   AgentAction[]
+  workflows AgentWorkflow[]
+  memories  AgentMemory[]
 
   @@index([status])
 }
@@ -237,6 +241,7 @@ model Memory {
   source      String?
   importance  Float    @default(0.5)
   tags        String?
+  embedding   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -274,22 +279,35 @@ model Connector {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  syncs    ConnectorSync[]
+  webhooks ConnectorWebhook[]
+
   @@index([status])
   @@index([orgId])
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
-  action      String
-  actor       String?
-  resource    String?
-  details     String?
-  severity    String   @default("info")
-  ipAddress   String?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  action       String
+  actor        String?
+  actorId      String?
+  resource     String?
+  resourceType String?
+  details      String?
+  severity     String   @default("info")
+  ipAddress    String?
+  userAgent    String?
+  requestId    String?
+  duration     Float?
+  tenantId     String?
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id])
+  createdAt    DateTime @default(now())
 
   @@index([severity])
   @@index([createdAt])
+  @@index([tenantId])
+  @@index([actorId])
+  @@index([action])
 }
 
 model ChatMessage {
@@ -304,16 +322,272 @@ model ChatMessage {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  passwordHash  String
-  role          String    @default("user")
-  avatar        String?
-  department    String?
-  lastLoginAt   DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                   String    @id @default(cuid())
+  name                 String
+  email                String    @unique
+  passwordHash         String
+  role                 String    @default("user")
+  avatar               String?
+  department           String?
+  lastLoginAt          DateTime?
+  failedLoginAttempts  Int       @default(0)
+  lockedUntil          DateTime?
+  mfaSecret            String?
+  mfaEnabled           Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenantMemberships TenantMember[]
+  apiKeys           ApiKey[]
 
   @@index([email])
+  @@index([lockedUntil])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Multi-Tenancy
+// ═══════════════════════════════════════════════════════════════════
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  domain      String?
+  plan        String   @default("professional")
+  status      String   @default("active")
+  maxUsers    Int      @default(50)
+  maxAgents   Int      @default(10)
+  maxStorage  BigInt   @default(10737418240)
+  settings    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     TenantMember[]
+  auditLogs   AuditLog[]
+  apiKeys     ApiKey[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([domain])
+}
+
+model TenantMember {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  role      String   @default("viewer")
+  status    String   @default("active")
+  joinedAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([role])
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  name        String
+  keyHash     String
+  keyPrefix   String
+  tenantId    String?
+  tenant      Tenant?   @relation(fields: [tenantId], references: [id])
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  permissions String?
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  status      String    @default("active")
+  createdAt   DateTime  @default(now())
+
+  @@index([keyHash])
+  @@index([tenantId])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Domain Events (Event Sourcing)
+// ═══════════════════════════════════════════════════════════════════
+
+model DomainEvent {
+  id            String   @id @default(cuid())
+  eventType     String
+  aggregateId   String
+  aggregateType String
+  version       Int      @default(1)
+  payload       String
+  metadata      String?
+  actorId       String?
+  actorType     String?
+  tenantId      String?
+  createdAt     DateTime @default(now())
+
+  @@index([aggregateId])
+  @@index([aggregateType])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([tenantId])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Agent Framework
+// ═══════════════════════════════════════════════════════════════════
+
+model AgentWorkflow {
+  id          String   @id @default(cuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  type        String
+  status      String   @default("pending")
+  definition  String
+  context     String?
+  result      String?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([agentId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AgentMemory {
+  id             String    @id @default(cuid())
+  agentId        String
+  agent          Agent     @relation(fields: [agentId], references: [id])
+  type           String
+  category       String?
+  content        String
+  embedding      String?
+  importance     Float     @default(0.5)
+  accessCount    Int       @default(0)
+  lastAccessedAt DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([agentId])
+  @@index([type])
+  @@index([importance])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Connector Framework
+// ═══════════════════════════════════════════════════════════════════
+
+model ConnectorSync {
+  id            String    @id @default(cuid())
+  connectorId   String
+  connector     Connector @relation(fields: [connectorId], references: [id])
+  status        String    @default("pending")
+  recordsSynced Int       @default(0)
+  recordsCreated Int      @default(0)
+  recordsUpdated Int      @default(0)
+  recordsFailed Int       @default(0)
+  error         String?
+  duration      Int       @default(0)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([connectorId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ConnectorWebhook {
+  id            String    @id @default(cuid())
+  connectorId   String
+  connector     Connector @relation(fields: [connectorId], references: [id])
+  eventType     String
+  payload       String
+  signature     String?
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([connectorId])
+  @@index([status])
+  @@index([eventType])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Feedback & Learning
+// ═══════════════════════════════════════════════════════════════════
+
+model Feedback {
+  id          String   @id @default(cuid())
+  targetType  String
+  targetId    String
+  userId      String?
+  rating      Int
+  comment     String?
+  tags        String?
+  createdAt   DateTime @default(now())
+
+  @@index([targetType])
+  @@index([targetId])
+  @@index([userId])
+  @@index([rating])
+}
+
+model QualityScore {
+  id          String   @id @default(cuid())
+  entityType  String
+  entityId    String
+  metric      String
+  score       Float
+  sampleSize  Int      @default(1)
+  period      String
+  periodStart DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([entityType, entityId, metric, period, periodStart])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([metric])
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Compliance & Data Governance
+// ═══════════════════════════════════════════════════════════════════
+
+model LegalHold {
+  id          String   @id @default(cuid())
+  reason      String
+  entityType  String
+  entityIds   String   // JSON array of entity IDs under hold
+  initiatedBy String
+  status      String   @default("active") // active | released
+  releasedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([entityType])
+  @@index([initiatedBy])
+  @@index([createdAt])
+}
+
+model DataLineage {
+  id              String   @id @default(cuid())
+  dataId          String
+  dataType        String
+  source          String
+  transformation  String?
+  destination     String
+  actor           String
+  tenantId        String?
+  createdAt       DateTime @default(now())
+
+  @@index([dataId])
+  @@index([dataType])
+  @@index([tenantId])
+  @@index([createdAt])
 }
