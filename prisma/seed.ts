@@ -5,25 +5,27 @@ const prisma = new PrismaClient()
 async function main() {
   console.log('🧹 Cleaning existing data...')
 
-  // Delete in correct order to respect foreign key constraints
-  await prisma.auditLog.deleteMany()
-  await prisma.chatMessage.deleteMany()
-  await prisma.agentAction.deleteMany()
-  await prisma.event.deleteMany()
-  await prisma.task.deleteMany()
-  await prisma.decision.deleteMany()
-  await prisma.graphRelation.deleteMany()
-  await prisma.graphEntity.deleteMany()
-  await prisma.prediction.deleteMany()
-  await prisma.memory.deleteMany()
-  await prisma.connector.deleteMany()
-  await prisma.agent.deleteMany()
-  await prisma.person.deleteMany()
-  await prisma.project.deleteMany()
-  await prisma.team.deleteMany()
-  await prisma.user.deleteMany()
-  await prisma.document.deleteMany()
-  await prisma.organization.deleteMany()
+  // Disable FK checks temporarily so we can delete in any order
+  await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = OFF`)
+
+  // Use raw SQL to wipe all tables and reset auto-increment
+  // This is more reliable than deleteMany() which can leave stale data
+  const tableNames = [
+    'AuditLog', 'ChatMessage', 'AgentAction', 'Event', 'Task',
+    'Decision', 'GraphRelation', 'GraphEntity', 'Prediction',
+    'Memory', 'Connector', 'Agent', 'Document', 'Person',
+    'Project', 'Team', 'User', 'Organization',
+  ]
+  for (const table of tableNames) {
+    await prisma.$executeRawUnsafe(`DELETE FROM "${table}"`)
+  }
+  // Reset SQLite auto-increment counters
+  for (const table of tableNames) {
+    await prisma.$executeRawUnsafe(`DELETE FROM sqlite_sequence WHERE name = '${table}'`)
+  }
+
+  // Re-enable FK checks
+  await prisma.$executeRawUnsafe(`PRAGMA foreign_keys = ON`)
 
   console.log('✅ Database cleaned. Seeding fresh data...\n')
 

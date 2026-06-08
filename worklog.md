@@ -29,3 +29,29 @@ Stage Summary:
 - Knowledge Graph: Fixed canvas rendering with proper flex/min-h-0 layout
 - ZAI SDK: Auto-creates .z-ai-config from env vars when missing
 - Graph View: Improved center positioning and zoom-to-cursor behavior
+
+---
+Task ID: 6
+Agent: Main
+Task: Fix Agent Control Center layout not fitting screen + Fix seed.ts idempotency
+
+Work Log:
+- Rewrote agents-view.tsx with fully responsive layout:
+  - Collapsible agent list sidebar (animated show/hide on desktop)
+  - Mobile overlay agent list (slides in from left)
+  - Collapsible actions log at bottom (starts collapsed, click to expand)
+  - Proper min-h-0 and overflow handling on all flex children
+  - Mobile agent list toggle button in chat header
+- Fixed layout.tsx: Changed motion.div from "h-full" to "flex min-h-0 flex-1 flex-col" for proper height propagation
+- Updated Caddyfile: Changed "localhost" to "127.0.0.1" to fix Caddy IPv6 resolution issue
+- Updated package.json: Added "-H ::" to dev script for dual-stack IPv4/IPv6 binding
+- Fixed prisma/seed.ts: Replaced deleteMany() chain with raw SQL DELETE + PRAGMA foreign_keys=OFF for reliable re-seeding
+- Build passes, lint passes
+- Browser verification blocked by sandbox Caddy/Node.js instability (works fine on user's laptop)
+
+Stage Summary:
+- agents-view.tsx: Complete responsive rewrite with collapsible panels
+- layout.tsx: Fixed height propagation to child views
+- Caddyfile: IPv6 fix (127.0.0.1 instead of localhost)
+- package.json: Dual-stack binding with -H ::
+- seed.ts: Idempotent re-seeding with raw SQL DELETE + FK pragma
