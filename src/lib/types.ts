@@ -79,6 +79,7 @@ export interface DashboardData {
   topMemories: Array<{ id: string; title: string; type: string; content: string; importance: number }>
   projects: DashboardProject[]
   connectors: DashboardConnector[]
+  eventTrend: Array<{ day: string; events: number }>
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────
@@ -418,6 +419,30 @@ export interface ConnectorSyncResponse {
     duration: number
     nextSyncAt: string
   }
+}
+
+// ─── Decisions ────────────────────────────────────────────────────────────────
+
+export interface DecisionData {
+  id: string
+  title: string
+  description?: string
+  status: string
+  impact: string
+  confidence: number
+  reasoning?: string
+  madeBy?: string
+  projectName?: string
+  createdAt: string
+  expectedOutcome: number
+  actualOutcome: number
+}
+
+export interface DecisionsResponse {
+  decisions: DecisionData[]
+  total: number
+  statusCounts: Record<string, number>
+  impactCounts: Record<string, number>
 }
 
 // ─── Domain Events ───────────────────────────────────────────────────────────

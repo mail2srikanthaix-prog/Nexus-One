@@ -4,7 +4,6 @@ import { db } from '@/lib/db'
 import * as bcrypt from 'bcryptjs'
 import { checkAccountLockout, recordFailedAttempt, clearFailedAttempts } from '@/lib/security'
 import { logAuthEvent } from '@/lib/audit'
-import type { AuditSeverity } from '@/lib/audit'
 import { TOTP } from 'otpauth'
 
 // ─── Environment Validation ──────────────────────────────────────────────────
@@ -85,23 +84,26 @@ const handler = NextAuth({
 
         // ── MFA / TOTP Verification ────────────────────────────────────
         if (user.mfaEnabled) {
+          if (!credentials.totpCode || !user.mfaSecret) {
+            // Credentials are valid but MFA code is missing.
+            // In the two-step flow, the client should call /api/auth/mfa/check first
+            // to detect MFA requirement before calling signIn.
+            await logAuthEvent('mfa.challenge', {
+              email: credentials.email,
+              userId: user.id,
+              ipAddress,
+              userAgent,
+              reason: user.mfaSecret ? 'Missing TOTP code — client should use MFA check endpoint first' : 'MFA secret not configured',
+            })
+            return null
+          }
+
           await logAuthEvent('mfa.challenge', {
             email: credentials.email,
             userId: user.id,
             ipAddress,
             userAgent,
           })
-
-          if (!credentials.totpCode || !user.mfaSecret) {
-            await logAuthEvent('mfa.failed', {
-              email: user.email,
-              userId: user.id,
-              ipAddress,
-              userAgent,
-              reason: user.mfaSecret ? 'Missing TOTP code' : 'MFA secret not configured',
-            })
-            return null
-          }
 
           // Reconstruct TOTP instance from stored secret and validate
           const totp = new TOTP({
@@ -173,7 +175,9 @@ const handler = NextAuth({
         token.id = user.id
         token.role = (user as { role: string }).role
         token.mfaEnabled = (user as { mfaEnabled: boolean }).mfaEnabled ?? false
-        token.mfaVerified = (user as { mfaEnabled: boolean }).mfaEnabled ? false : true
+        // If the user has MFA enabled and we reached here, TOTP was already verified
+        // in the authorize function — so mfaVerified is always true on sign-in.
+        token.mfaVerified = true
         token.loginAt = Date.now()
 
         // Resolve the user's first active tenant membership for multi-tenancy

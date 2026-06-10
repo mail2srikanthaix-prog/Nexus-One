@@ -98,14 +98,35 @@ export async function GET(request: Request) {
       : 0
 
     // ── Data for display lists ───────────────────────────────────────────
-    const [recentEvents, agents, predictions, topMemories, activeProjects, connectors] = await Promise.all([
+    const [recentEvents, agents, predictions, topMemories, activeProjects, connectors, recentEventsForTrend] = await Promise.all([
       db.event.findMany({ where: eventFilter, orderBy: { createdAt: 'desc' }, take: 20 }),
       db.agent.findMany({ where: tenantFilter, include: { actions: { orderBy: { createdAt: 'desc' }, take: 3 } } }),
       db.prediction.findMany({ where: { ...tenantFilter, status: 'active' }, take: 6 }),
       db.memory.findMany({ where: tenantFilter, orderBy: { importance: 'desc' }, take: 5 }),
       db.project.findMany({ where: { ...orgFilter, status: 'active' }, take: 6 }),
       db.connector.findMany({ where: orgFilter }),
+      db.event.findMany({
+        where: {
+          ...eventFilter,
+          createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
+        },
+        select: { createdAt: true },
+      }),
     ])
+
+    // ── Event trend aggregation (7 days, zero-filled) ────────────────────
+    const dayMap: Record<string, number> = {}
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date()
+      d.setDate(d.getDate() - i)
+      const key = d.toLocaleDateString('en-US', { weekday: 'short' })
+      dayMap[key] = 0
+    }
+    for (const event of recentEventsForTrend) {
+      const key = new Date(event.createdAt).toLocaleDateString('en-US', { weekday: 'short' })
+      if (key in dayMap) dayMap[key]++
+    }
+    const eventTrend = Object.entries(dayMap).map(([day, events]) => ({ day, events }))
 
     return apiResponse({
       organization: org,
@@ -142,6 +163,7 @@ export async function GET(request: Request) {
       topMemories,
       projects: activeProjects,
       connectors,
+      eventTrend,
     })
   } catch (error) {
     return handleApiError(error, 'Dashboard API')

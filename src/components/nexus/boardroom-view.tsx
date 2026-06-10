@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Send, Loader2, Crown, DollarSign, Cpu, Settings, TrendingUp } from 'lucide-react'
+import { Users, Send, Loader2, Crown, DollarSign, Cpu, Settings, TrendingUp, Radio } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,22 +42,25 @@ export function BoardroomView() {
   const [responses, setResponses] = useState<AgentResponse[]>([])
   const [isDebating, setIsDebating] = useState(false)
   const [consensus, setConsensus] = useState<string | null>(null)
+  const [consensusLoading, setConsensusLoading] = useState(false)
+  const [allFailed, setAllFailed] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [responses])
+  }, [responses, consensus, consensusLoading])
 
   const startDebate = async (question: string) => {
     if (!question.trim()) return
     setScenario(question)
     setResponses(boardMembers.map((m) => ({ member: m, response: '', loading: true })))
     setConsensus(null)
+    setConsensusLoading(false)
+    setAllFailed(false)
     setIsDebating(true)
 
-    // Get responses from each agent sequentially
-    for (let i = 0; i < boardMembers.length; i++) {
-      const member = boardMembers[i]
+    // Fire all agent requests in parallel
+    const responsePromises = boardMembers.map(async (member, i) => {
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
@@ -70,31 +73,51 @@ export function BoardroomView() {
         })
         if (!res.ok) throw new Error('Chat request failed')
         const data = await res.json()
-
-        setResponses((prev) =>
-          prev.map((r, idx) =>
-            idx === i ? { ...r, response: data.response || 'No response', loading: false } : r
-          )
-        )
+        return { index: i, response: data.response || 'No response', error: false }
       } catch {
+        return { index: i, response: 'Error: Could not get response.', error: true }
+      }
+    })
+
+    // Staggered rendering: update state as each promise resolves individually
+    responsePromises.forEach((promise, i) => {
+      promise.then((result) => {
         setResponses((prev) =>
           prev.map((r, idx) =>
-            idx === i ? { ...r, response: 'Error: Could not get response.', loading: false } : r
+            idx === i ? { ...r, response: result.response, loading: false } : r
           )
         )
-      }
+      })
+    })
+
+    // Wait for all responses before generating consensus
+    const results = await Promise.all(responsePromises)
+
+    // Check if all agents failed
+    const allErrors = results.every((r) => r.error)
+    if (allErrors) {
+      setAllFailed(true)
+      setIsDebating(false)
+      return
     }
 
-    // Generate consensus
+    // Generate consensus using the actual agent responses
+    const respondedAgents = results
+      .filter((r) => !r.error)
+      .map((r) => {
+        const member = boardMembers[r.index]
+        return `${member.role} (${member.name}): ${r.response}`
+      })
+      .join('\n\n')
+
+    setConsensusLoading(true)
+
     try {
-      const allResponses = await Promise.resolve(
-        boardMembers.map((m) => m.role).join(', ')
-      )
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: `Based on the board discussion about "${question}", provide a concise consensus summary with key agreements, disagreements, and the recommended course of action. The board members are: ${allResponses}.`,
+          message: `Based on the board discussion about "${question}", provide a concise consensus summary with key agreements, disagreements, and the recommended course of action.\n\nHere are the board members' perspectives:\n${respondedAgents}`,
           agentType: 'ceo',
           history: [],
         }),
@@ -106,8 +129,14 @@ export function BoardroomView() {
       setConsensus('Error generating consensus.')
     }
 
+    setConsensusLoading(false)
     setIsDebating(false)
   }
+
+  // Count how many agents have responded so far
+  const respondedCount = responses.filter((r) => r.response && !r.loading).length
+  const totalAgents = boardMembers.length
+  const allAgentsResponded = respondedCount === totalAgents && responses.length > 0
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -172,6 +201,57 @@ export function BoardroomView() {
 
       {/* Boardroom Table */}
       <div className="mx-auto w-full max-w-4xl p-6">
+        {/* Waiting for responses indicator */}
+        <AnimatePresence>
+          {isDebating && !allAgentsResponded && responses.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-6"
+            >
+              <div className="flex items-center gap-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 py-3">
+                <Radio className="h-4 w-4 animate-pulse text-cyan-400" />
+                <span className="text-sm text-cyan-300">
+                  Waiting for responses…{' '}
+                  <span className="font-medium text-cyan-400">
+                    {respondedCount} / {totalAgents}
+                  </span>{' '}
+                  agents have responded
+                </span>
+                <div className="ml-auto flex gap-1">
+                  {boardMembers.map((_, i) => (
+                    <div
+                      key={i}
+                      className={`h-2 w-2 rounded-full transition-colors duration-300 ${
+                        i < respondedCount ? 'bg-cyan-400' : 'bg-cyan-500/20'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* All agents failed error message */}
+        <AnimatePresence>
+          {allFailed && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-6"
+            >
+              <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3">
+                <p className="text-sm text-red-400">
+                  All board agents failed to respond. Please check your connection and try again.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Board Members Visual */}
         <div className="mb-8 flex flex-wrap items-center justify-center gap-4">
           {boardMembers.map((member) => {
@@ -244,6 +324,27 @@ export function BoardroomView() {
               </motion.div>
             )
           })}
+        </AnimatePresence>
+
+        {/* Consensus Loading Indicator */}
+        <AnimatePresence>
+          {consensusLoading && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+            >
+              <Card className="mb-4 border-2 border-amber-500/20 bg-amber-500/5">
+                <CardContent className="flex items-center gap-3 p-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-amber-400" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-400">Generating Board Consensus…</p>
+                    <p className="text-xs text-gray-500">Analyzing all perspectives to find common ground</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         {/* Consensus */}

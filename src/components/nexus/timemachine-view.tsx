@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
-import type { EventsResponse, EventData } from '@/lib/types'
+import type { EventsResponse, EventData, DecisionsResponse, DecisionData } from '@/lib/types'
 
 const typeIcons: Record<string, React.ElementType> = {
   decision: Gavel,
@@ -54,8 +54,13 @@ export function TimemachineView() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [fetchKey, setFetchKey] = useState(0)
 
+  // Decisions state
+  const [decisionsData, setDecisionsData] = useState<DecisionsResponse | null>(null)
+  const [decisionsLoading, setDecisionsLoading] = useState(true)
+
   const handleRetry = () => {
     setLoading(true)
+    setDecisionsLoading(true)
     setError(null)
     setFetchKey((k) => k + 1)
   }
@@ -70,6 +75,23 @@ export function TimemachineView() {
       .then((events) => { if (!cancelled) setEventsData(events) })
       .catch(() => { if (!cancelled) setError('Failed to load time machine data. Please try again.') })
       .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [fetchKey])
+
+  // Fetch decisions data
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/decisions?limit=20')
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then((data) => { if (!cancelled) setDecisionsData(data) })
+      .catch(() => {
+        // Silently fail — the sidebar will show a fallback state
+        if (!cancelled) setDecisionsData(null)
+      })
+      .finally(() => { if (!cancelled) setDecisionsLoading(false) })
     return () => { cancelled = true }
   }, [fetchKey])
 
@@ -98,13 +120,15 @@ export function TimemachineView() {
     return sorted.slice(0, count)
   }, [eventsData, timeIndex])
 
-  // Reality gap data (mock)
-  const realityGapData = [
-    { decision: 'Hire VP Eng', expected: 85, actual: 62 },
-    { decision: 'Migrate to Cloud', expected: 90, actual: 78 },
-    { decision: 'Launch v2.0', expected: 70, actual: 55 },
-    { decision: 'Expand to EU', expected: 60, actual: 45 },
-  ]
+  // Map decisions to reality gap chart data
+  const realityGapData = useMemo(() => {
+    if (!decisionsData?.decisions?.length) return []
+    return decisionsData.decisions.map((d: DecisionData) => ({
+      decision: d.title.length > 16 ? d.title.slice(0, 14) + '…' : d.title,
+      expected: d.expectedOutcome,
+      actual: d.actualOutcome,
+    }))
+  }, [decisionsData])
 
   if (error) {
     return (
@@ -292,6 +316,14 @@ export function TimemachineView() {
                     {visibleEvents.filter((e: EventData) => e.severity === 'warning').length}
                   </span>
                 </div>
+                {decisionsData && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Decisions</span>
+                    <span className="text-xs font-mono text-purple-400">
+                      {decisionsData.total}
+                    </span>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -305,19 +337,29 @@ export function TimemachineView() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={realityGapData}>
-                  <XAxis dataKey="decision" tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: '#16161f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
-                    labelStyle={{ color: '#9ca3af' }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Bar dataKey="expected" fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="actual" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {decisionsLoading ? (
+                <div className="flex h-[200px] items-center justify-center">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+                </div>
+              ) : realityGapData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={realityGapData}>
+                    <XAxis dataKey="decision" tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ background: '#16161f', border: '1px solid #1e1e2e', borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ color: '#9ca3af' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Bar dataKey="expected" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="actual" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-[200px] items-center justify-center">
+                  <p className="text-xs text-gray-500">No decisions data available</p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -327,21 +369,42 @@ export function TimemachineView() {
               <CardTitle className="text-xs font-medium text-gray-400">Key Decisions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {realityGapData.map((d) => (
-                <div key={d.decision} className="rounded-lg bg-[#16161f] p-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-300">{d.decision}</span>
-                    <Badge className={decisionStatusColors.implemented}>implemented</Badge>
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-3 text-[10px]">
-                    <span className="text-cyan-400">Expected: {d.expected}%</span>
-                    <span className="text-amber-400">Actual: {d.actual}%</span>
-                    <span className={`font-mono ${d.actual >= d.expected ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {d.actual >= d.expected ? '+' : ''}{d.actual - d.expected}%
-                    </span>
-                  </div>
+              {decisionsLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
                 </div>
-              ))}
+              ) : decisionsData?.decisions?.length ? (
+                decisionsData.decisions.slice(0, 8).map((d: DecisionData) => {
+                  const gap = d.actualOutcome - d.expectedOutcome
+                  return (
+                    <div key={d.id} className="rounded-lg bg-[#16161f] p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs text-gray-300" title={d.title}>{d.title}</span>
+                        <Badge className={`shrink-0 text-[10px] ${decisionStatusColors[d.status] || 'bg-gray-500/20 text-gray-400'}`}>
+                          {d.status}
+                        </Badge>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-3 text-[10px]">
+                        <span className="text-cyan-400">Expected: {d.expectedOutcome}%</span>
+                        <span className="text-amber-400">Actual: {d.actualOutcome}%</span>
+                        <span className={`font-mono ${gap >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {gap >= 0 ? '+' : ''}{gap}%
+                        </span>
+                      </div>
+                      {(d.madeBy || d.projectName) && (
+                        <div className="mt-1 flex items-center gap-2 text-[10px] text-gray-500">
+                          {d.madeBy && <span>👤 {d.madeBy}</span>}
+                          {d.projectName && <span>📁 {d.projectName}</span>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="flex items-center justify-center py-6">
+                  <p className="text-xs text-gray-500">No decisions recorded yet</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

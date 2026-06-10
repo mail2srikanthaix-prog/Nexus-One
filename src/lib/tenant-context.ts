@@ -190,6 +190,61 @@ export async function addEventTenantFilter(
   }
 }
 
+// ─── Decision-Specific Filter ──────────────────────────────────────────────
+
+/**
+ * Add tenant filtering for the Decision model, which doesn't have a
+ * direct `tenantId` or `orgId`. Decisions are linked to tenants through
+ * their Person (madeById) or Project (projectId) relationships.
+ *
+ * Strategy:
+ *  - Get org IDs for the tenant
+ *  - Find person IDs in those orgs
+ *  - Find project IDs in those orgs
+ *  - Filter decisions where madeById OR projectId matches
+ *
+ * If `tenantId` is null/undefined, returns the original where clause
+ * unchanged (backward compatible).
+ */
+export async function addDecisionTenantFilter(
+  where: Record<string, unknown>,
+  tenantId: string | null
+): Promise<Record<string, unknown>> {
+  if (!tenantId) return where
+
+  const orgIds = await getTenantOrgIds(tenantId)
+
+  const [personIds, projectIds] = await Promise.all([
+    db.person.findMany({
+      where: { orgId: { in: orgIds } },
+      select: { id: true },
+    }),
+    db.project.findMany({
+      where: { orgId: { in: orgIds } },
+      select: { id: true },
+    }),
+  ])
+
+  const pIds = personIds.map((p) => p.id)
+  const prIds = projectIds.map((p) => p.id)
+
+  const existingConditions = Object.entries(where)
+  const tenantFilter: Record<string, unknown> = {
+    OR: [
+      { madeById: { in: pIds } },
+      { projectId: { in: prIds } },
+    ],
+  }
+
+  if (existingConditions.length === 0) {
+    return tenantFilter
+  }
+
+  return {
+    AND: [where, tenantFilter],
+  }
+}
+
 // ─── Graph Relation Filter ─────────────────────────────────────────────────
 
 /**

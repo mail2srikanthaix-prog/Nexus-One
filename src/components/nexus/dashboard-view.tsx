@@ -87,18 +87,6 @@ const severityIcons: Record<string, string> = {
   critical: '⚡',
 }
 
-// Sample event trend data — this represents a 7-day view which is not
-// available from the current API, so we use representative sample data.
-const eventTrendData = [
-  { day: 'Mon', events: 12 },
-  { day: 'Tue', events: 19 },
-  { day: 'Wed', events: 8 },
-  { day: 'Thu', events: 24 },
-  { day: 'Fri', events: 15 },
-  { day: 'Sat', events: 6 },
-  { day: 'Sun', events: 10 },
-]
-
 const container = {
   hidden: { opacity: 0 },
   show: {
@@ -339,14 +327,14 @@ export function DashboardView() {
 
         {/* Right column: Charts + Project Health */}
         <motion.div variants={item} className="space-y-6">
-          {/* Event Trend Chart — sample data, see comment at top */}
+          {/* Event Trend Chart — 7-day DB aggregation */}
           <Card className="border-[#1e1e2e] bg-[#111118]">
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs font-medium text-gray-400">Event Trend (7 Days) — Sample</CardTitle>
+              <CardTitle className="text-xs font-medium text-gray-400">Event Trend (7 Days)</CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={100}>
-                <AreaChart data={eventTrendData}>
+                <AreaChart data={data.eventTrend}>
                   <defs>
                     <linearGradient id="eventGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
